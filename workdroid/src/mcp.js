@@ -6,7 +6,7 @@ const READ_ONLY = { readOnlyHint: true, destructiveHint: false, openWorldHint: f
 const NAVIGATION = { readOnlyHint: false, destructiveHint: false, openWorldHint: false };
 const CONSEQUENTIAL = { readOnlyHint: false, destructiveHint: true, openWorldHint: false };
 
-export const WORKDROID_VERSION = "0.5.3";
+export const WORKDROID_VERSION = "0.5.4";
 
 async function relayJson(stub, path, body) {
   const response = await stub.fetch(new Request(`https://relay.internal${path}`, {
@@ -23,7 +23,14 @@ async function relayJson(stub, path, body) {
 
 async function action(stub, name, args = {}) {
   const data = await relayJson(stub, "/action", { action: name, args });
+  return verifiedActionResult(data, name);
+}
+
+export function verifiedActionResult(data, name) {
   if (data.ok === false) throw new Error(data.error || `Android action failed: ${name}`);
+  if (data.result?.ok === false) {
+    throw new Error(data.result.error || data.result.outcome || `Android action failed: ${name}`);
+  }
   return data.result;
 }
 
