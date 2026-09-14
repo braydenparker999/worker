@@ -7,6 +7,10 @@ android {
     namespace = "com.workdroid.next"
     compileSdk = 35
 
+    buildFeatures {
+        buildConfig = true
+    }
+
     defaultConfig {
         applicationId = "com.workdroid.bridge.next"
         minSdk = 30
