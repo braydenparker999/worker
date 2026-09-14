@@ -22,3 +22,15 @@ export function selectPhoneSocket(sockets) {
     .filter(socket => socket?.readyState === OPEN)
     .sort((left, right) => connectedAt(right) - connectedAt(left))[0] || null;
 }
+
+/**
+ * Never let a legacy bridge reconnect evict an already-open newer protocol.
+ * Equal or newer protocols may replace the socket to recover normal app or
+ * network reconnects.
+ */
+export function shouldAcceptPhoneSocket(current, incomingProtocol) {
+  if (!current || current.readyState !== OPEN) return true;
+  const currentProtocol = Number(socketMetadata(current).protocol || 1);
+  const candidateProtocol = Number(incomingProtocol || 1);
+  return Number.isFinite(candidateProtocol) && candidateProtocol >= currentProtocol;
+}
