@@ -326,6 +326,19 @@ export class PhoneRelay extends DurableObject {
     return { text: String(text || "").slice(0, 300), exact: exact !== false };
   }
 
+  selectorForLabel(screen, text, exact = true) {
+    const wanted = String(text || "").slice(0, 300);
+    const needle = wanted.toLocaleLowerCase();
+    const nodes = Array.isArray(screen?.nodes) ? screen.nodes : [];
+    const matches = (value) => {
+      const candidate = String(value || "").toLocaleLowerCase();
+      return exact !== false ? candidate === needle : candidate.includes(needle);
+    };
+    if (nodes.some(node => matches(node?.text))) return { text: wanted, exact: exact !== false };
+    if (nodes.some(node => matches(node?.description))) return { description: wanted, exact: exact !== false };
+    return { text: wanted, exact: exact !== false };
+  }
+
   focusedEditor(screen) {
     return (Array.isArray(screen?.nodes) ? screen.nodes : []).find(node => node?.focused === true && node?.editable === true) || null;
   }
@@ -346,7 +359,7 @@ export class PhoneRelay extends DurableObject {
       return { action: "open_app", expected_package: expectedPackage, package_name: packageName };
     }
     if (action === "tap_text") {
-      return { action: "tap", expected_package: expectedPackage, target: this.selectorForText(args.text, args.exact) };
+      return { action: "tap", expected_package: expectedPackage, target: this.selectorForLabel(context.screen, args.text, args.exact) };
     }
     if (action === "tap") {
       return {
@@ -405,6 +418,7 @@ export class PhoneRelay extends DurableObject {
       package: ready.screen?.package,
       revision: ready.screen?.revision,
       editor: this.focusedEditor(ready.screen),
+      screen: ready.screen,
     };
     const step = this.stepForProtocol2(action, args, context);
     return this.executeProtocol2Job(ready.sessionId, [step], false);
@@ -417,6 +431,7 @@ export class PhoneRelay extends DurableObject {
       package: observed.screen?.package,
       revision: observed.screen?.revision,
       editor: this.focusedEditor(observed.screen),
+      screen: observed.screen,
     };
     const executable = [];
     const mappedIndexes = [];
