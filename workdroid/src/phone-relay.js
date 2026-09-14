@@ -63,6 +63,36 @@ export class PhoneRelay extends DurableObject {
       return json({ ok: true });
     }
 
+    if (url.pathname === "/oauth/code" && request.method === "POST") {
+      const body = await request.json().catch(() => ({}));
+      const required = ["client_id", "redirect_uri", "code_challenge", "resource", "scope"];
+      if (required.some(key => !body[key])) return json({ error: "Incomplete authorization request" }, 400);
+      const code = `${crypto.randomUUID()}${crypto.randomUUID().replaceAll("-", "")}`;
+      await this.ctx.storage.put(`oauth:code:${code}`, {
+        client_id: String(body.client_id),
+        redirect_uri: String(body.redirect_uri),
+        code_challenge: String(body.code_challenge),
+        resource: String(body.resource),
+        scope: String(body.scope),
+        expires_at: Date.now() + 300_000,
+      });
+      return json({ code });
+    }
+
+    if (url.pathname === "/oauth/exchange" && request.method === "POST") {
+      const body = await request.json().catch(() => ({}));
+      const code = String(body.code || "");
+      if (!code) return json({ error: "Authorization code is required" }, 400);
+      let record = null;
+      await this.ctx.storage.transaction(async transaction => {
+        const key = `oauth:code:${code}`;
+        record = await transaction.get(key);
+        if (record) await transaction.delete(key);
+      });
+      if (!record || record.expires_at <= Date.now()) return json({ error: "Authorization code is invalid or expired" }, 400);
+      return json(record);
+    }
+
     if (url.pathname === "/ws") {
       if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket") {
         return new Response("WebSocket required", { status: 426 });

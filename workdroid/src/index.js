@@ -4,6 +4,14 @@ import {
   json, secureHeaders, clientIp, sameOrigin, cookies,
   makeSession, validSession,
 } from "./security.js";
+import {
+  protectedResourceMetadata,
+  authorizationServerMetadata,
+  handleAuthorize,
+  handleToken,
+  authorizeMcpRequest,
+} from "./oauth.js";
+import { handleMcp } from "./mcp.js";
 
 export { PhoneRelay };
 
@@ -38,6 +46,41 @@ export default {
         const r = await stub.fetch("https://relay.internal/status");
         const state = await r.json();
         return secureHeaders(json({ ok: true, phone_connected: !!state.phone_connected }));
+      }
+
+      if (["/.well-known/oauth-protected-resource", "/.well-known/oauth-protected-resource/mcp"].includes(url.pathname) && request.method === "GET") {
+        return secureHeaders(protectedResourceMetadata(request));
+      }
+
+      if (url.pathname === "/.well-known/oauth-authorization-server" && request.method === "GET") {
+        return secureHeaders(authorizationServerMetadata(request));
+      }
+
+      if (url.pathname === "/oauth/authorize") {
+        if (request.method === "POST" && !sameOrigin(request)) {
+          return secureHeaders(oauthErrorResponse("Origin rejected", 403));
+        }
+        return secureHeaders(await handleAuthorize(request, stub));
+      }
+
+      if (url.pathname === "/oauth/token") {
+        return secureHeaders(await handleToken(request, env, stub));
+      }
+
+      if (url.pathname === "/mcp") {
+        if (request.method === "OPTIONS") {
+          return secureHeaders(new Response(null, {
+            status: 204,
+            headers: {
+              "access-control-allow-origin": "https://chatgpt.com",
+              "access-control-allow-methods": "GET, POST, DELETE, OPTIONS",
+              "access-control-allow-headers": "authorization, content-type, mcp-protocol-version, mcp-session-id",
+            },
+          }));
+        }
+        const authorization = await authorizeMcpRequest(request, env);
+        if (!authorization.ok) return secureHeaders(authorization.response);
+        return secureHeaders(await handleMcp(request, stub, authorization.authInfo));
       }
 
       const loggedIn = await validSession(
@@ -131,3 +174,7 @@ export default {
     }
   },
 };
+
+function oauthErrorResponse(message, status) {
+  return json({ error: "invalid_request", error_description: message }, status);
+}

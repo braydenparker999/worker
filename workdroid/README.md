@@ -1,27 +1,38 @@
-# WorkDroid Relay — Cloudflare v0.1
+# WorkDroid Relay — Cloudflare v0.2
 
 This is the preferred always-available relay for the Android/ChatGPT Work experiment.
 
-It lets the **stock MIT-licensed Hermes Android Bridge** connect outward over WSS, while ChatGPT Work operates a tiny authenticated control page over HTTPS. No OpenAI API key is used and no model runs in the relay.
+It lets the custom **WorkDroid Bridge** connect outward over WSS. ChatGPT can control it through a private OAuth-secured MCP connection, while the authenticated `/control` page remains available for diagnostics. No OpenAI API key is used and no model runs in the relay.
 
 ```text
-ChatGPT Android -> Work cloud browser -> Cloudflare Worker
-                                           |
-                                    Durable Object
-                                  (hibernating WebSocket)
-                                           ^
-                                           | WSS
-                                           |
-                                 Hermes Android Bridge
-                                           |
-                                  AccessibilityService
+ChatGPT Work -- OAuth + MCP --> Cloudflare Worker
+                                  |
+                           Durable Object
+                         (hibernating WebSocket)
+                                  ^
+                                  | authenticated WSS
+                                  |
+                          WorkDroid Bridge
+                                  |
+                         AccessibilityService
 ```
 
 ## Why Cloudflare Durable Objects
 
 A normal always-on server can stay billable just because the phone keeps a WebSocket open. Durable Objects' **WebSocket Hibernation API** keeps the client connection alive while allowing the object to sleep when idle. That is unusually well matched to a phone agent that may sit idle for hours between commands.
 
-## What v0.1 exposes to Work
+## What v0.2 exposes to Work
+
+The `/mcp` endpoint advertises focused tools with schemas and safety annotations:
+
+- connection status, current app, accessibility screen tree, and screenshots
+- installed app listing and app launch
+- Back, Home, and Recents
+- tap by accessible text or coordinates, text entry, and swipes
+- media controls and semantic absolute-time media seeking
+- compound flows of up to 20 approved actions in one relay round trip
+
+The existing `/control` page also exposes the lower-level relay actions:
 
 - screen accessibility tree
 - screenshot
@@ -50,7 +61,7 @@ From Cloudflare **Workers & Pages**, create/import a Worker from GitHub, select 
 
 Add these three Worker secrets (real values must never be committed):
 
-- `DEVICE_TOKEN` — exactly the 6-character pairing code shown in Hermes Android Bridge.
+- `DEVICE_TOKEN` — the persistent 256-bit token configured in WorkDroid Bridge.
 - `CONTROL_PASSWORD` — a long unique password used to sign into `/control`.
 - `SESSION_SECRET` — 32+ random bytes / 64+ hex characters used to sign the Work browser session.
 
@@ -67,7 +78,7 @@ npx wrangler login
 
 ### 2. Set three secrets
 
-The stock Hermes Bridge shows a six-character pairing code. Use that exact code for `DEVICE_TOKEN`.
+Use the same persistent device token configured in WorkDroid Bridge for `DEVICE_TOKEN`.
 
 ```bash
 npx wrangler secret put DEVICE_TOKEN
@@ -77,7 +88,7 @@ npx wrangler secret put SESSION_SECRET
 
 Recommended values:
 
-- `DEVICE_TOKEN`: the Hermes-generated six-character code.
+- `DEVICE_TOKEN`: the WorkDroid Bridge 256-bit device token.
 - `CONTROL_PASSWORD`: long unique password (20+ random characters).
 - `SESSION_SECRET`: 32+ random bytes / 64+ hex characters.
 
@@ -101,13 +112,22 @@ https://workdroid-relay.<account>.workers.dev
 
 ### 4. Connect Android
 
-Install/open the stock Hermes Android Bridge, enable its Accessibility Service, and enter the Worker URL above as the server URL.
+Install/open WorkDroid Bridge, enable its Accessibility Service, and enter the Worker URL above as the server URL.
 
-Because the URL is HTTPS, the Hermes client builds a `wss://.../ws` connection automatically.
+Because the URL is HTTPS, the bridge builds a `wss://.../ws` connection automatically.
 
 Tap Connect. The WorkDroid page should then show **Phone connected**.
 
-### 5. Prove ChatGPT Work can drive it
+### 5. Connect ChatGPT Developer mode
+
+1. Enable Developer mode under ChatGPT **Settings → Security and login**.
+2. Open **ChatGPT Plugins**, select the plus button, and add a private MCP connection.
+3. Use `https://workdroid-relay.<account>.workers.dev/mcp` as the MCP URL.
+4. Choose OAuth/CIMD when prompted.
+5. Sign in on the WorkDroid authorization page with `CONTROL_PASSWORD`.
+6. Add WorkDroid from the Developer mode tools menu in a new Work conversation.
+
+### 6. Prove ChatGPT Work can drive it
 
 Open ChatGPT on the phone, switch to Work, and ask it to visit:
 
@@ -124,23 +144,19 @@ The relay's batch example performs essentially that sequence.
 ## Security model
 
 - HTTPS/WSS is provided by Cloudflare.
-- The Android socket authenticates with the Hermes pairing token in the Authorization header.
+- The Android socket authenticates with its persistent device token in the Authorization header.
 - The Work control page has a separate password and an HMAC-signed, Secure, HttpOnly, SameSite=Strict session cookie.
+- MCP uses OAuth 2.1 authorization code flow with PKCE S256, one-time codes, signed access tokens, and refresh tokens.
+- OAuth accepts only ChatGPT's documented client metadata and callback URL patterns.
 - Failed device and control-password attempts are rate limited in Durable Object storage.
 - Device token never appears in a URL.
 - Cross-origin state-changing control requests are rejected.
 - Sensitive Android capabilities are not exposed in v0.1.
 - The relay blocks controlling/reading ChatGPT itself by default to avoid recursive agent loops.
 
-## Known weakness before long-term use
-
-The stock Hermes app uses a six-character device pairing token. Rate limiting makes opportunistic brute force difficult, and TLS prevents passive interception, but a six-character credential is still not the security level we want for permanent full-device control.
-
-After the Work proof succeeds, v0.2 should fork the Android bridge and replace the pairing token with a persistent 256-bit device credential. The Hermes code is MIT licensed, so that is straightforward.
-
 ## Protocol compatibility
 
-The bridge protocol matches `raulvidis/hermes-android`:
+The bridge protocol remains compatible with `raulvidis/hermes-android`:
 
 ```json
 // relay -> phone

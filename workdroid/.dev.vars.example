@@ -1,9 +1,9 @@
 # Required private values. Cloudflare's deploy flow can prompt for these.
-# DEVICE_TOKEN must exactly match the 6-character pairing code shown by Hermes Android Bridge v0.5.0.
-DEVICE_TOKEN=YOUR_HERMES_PAIRING_CODE
+# DEVICE_TOKEN must exactly match the persistent 256-bit token configured in WorkDroid Bridge.
+DEVICE_TOKEN=YOUR_WORKDROID_DEVICE_TOKEN
 
 # Use a long unique password. This is what ChatGPT Work enters once on /login.
 CONTROL_PASSWORD=CHOOSE_A_LONG_RANDOM_PASSWORD
 
-# HMAC signing key for the Work browser session cookie. Use 32+ random bytes / 64+ hex characters.
+# HMAC signing key for browser sessions and OAuth tokens. Use 32+ random bytes / 64+ hex characters.
 SESSION_SECRET=GENERATE_A_64_HEX_CHARACTER_SECRET
