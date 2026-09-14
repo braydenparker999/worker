@@ -6,7 +6,7 @@ const READ_ONLY = { readOnlyHint: true, destructiveHint: false, openWorldHint: f
 const NAVIGATION = { readOnlyHint: false, destructiveHint: false, openWorldHint: false };
 const CONSEQUENTIAL = { readOnlyHint: false, destructiveHint: true, openWorldHint: false };
 
-export const WORKDROID_VERSION = "0.5.1";
+export const WORKDROID_VERSION = "0.5.2";
 
 async function relayJson(stub, path, body) {
   const response = await stub.fetch(new Request(`https://relay.internal${path}`, {
@@ -40,7 +40,7 @@ function toolResult(summary, result) {
 }
 
 function nodeLabel(node) {
-  return String(node?.text || node?.contentDescription || node?.content_description || node?.label || "").trim();
+  return String(node?.text || node?.description || node?.contentDescription || node?.content_description || node?.label || "").trim();
 }
 
 function limitedText(value, max = 500) {
@@ -52,9 +52,9 @@ function compactNode(node, includeBounds = false) {
   const out = {};
   const id = node?.nodeId ?? node?.node_id ?? node?.id;
   const text = limitedText(node?.text);
-  const description = limitedText(node?.contentDescription || node?.content_description);
+  const description = limitedText(node?.description || node?.contentDescription || node?.content_description);
   const viewId = limitedText(node?.viewId ?? node?.view_id, 300);
-  const className = String(node?.className || node?.class_name || "");
+  const className = String(node?.role || node?.className || node?.class_name || "");
   if (id !== undefined) out.id = id;
   if (text) out.text = text;
   if (description && description !== text) out.description = description;
