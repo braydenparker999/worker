@@ -415,10 +415,35 @@ export class PhoneRelay extends DurableObject {
       };
     }
     if (action === "wait") {
-      const target = args.target || this.selectorForText(args.text, args.exact === true);
+      const target = args.target || this.selectorForLabel(context.screen, args.text, args.exact === true);
       return { action: "wait_for", expected_package: expectedPackage, target };
     }
     throw Object.assign(new Error(`Action is not available through WorkDroid protocol 2: ${action}`), { status: 400 });
+  }
+
+  async executeProtocol2CompatibilityStep(action, args, observation) {
+    const contextFor = screen => ({
+      package: screen?.package,
+      revision: screen?.revision,
+      editor: this.focusedEditor(screen),
+      screen,
+    });
+    const originalPackage = String(observation.screen?.package || "");
+    let step = this.stepForProtocol2(action, args, contextFor(observation.screen));
+    let job = await this.executeProtocol2Job(observation.sessionId, [step], false);
+
+    // A STALE_SCREEN/not_executed result proves Android rejected the swipe
+    // before dispatch. Rebinding the same relative gesture to the new revision
+    // is safe only while the foreground package and control session are stable.
+    if (action === "swipe" && job?.ok === false && job.error === "STALE_SCREEN" && job.outcome === "not_executed") {
+      const fresh = await this.observeProtocol2(false);
+      if (fresh.sessionId === observation.sessionId && String(fresh.screen?.package || "") === originalPackage) {
+        step = this.stepForProtocol2(action, args, contextFor(fresh.screen));
+        job = await this.executeProtocol2Job(fresh.sessionId, [step], false);
+        return { job, screen: job?.screen || fresh.screen, recovered: true };
+      }
+    }
+    return { job, screen: job?.screen || observation.screen, recovered: false };
   }
 
   async executeProtocol2Action(action, args = {}) {
@@ -432,14 +457,8 @@ export class PhoneRelay extends DurableObject {
 
     let ready = observed;
     if (action === "open_app") ready = await this.leaveBlockedPackage(observed);
-    const context = {
-      package: ready.screen?.package,
-      revision: ready.screen?.revision,
-      editor: this.focusedEditor(ready.screen),
-      screen: ready.screen,
-    };
-    const step = this.stepForProtocol2(action, args, context);
-    return this.executeProtocol2Job(ready.sessionId, [step], false);
+    const executed = await this.executeProtocol2CompatibilityStep(action, args, ready);
+    return executed.recovered ? { ...executed.job, recovered_from: "STALE_SCREEN" } : executed.job;
   }
 
   async executeProtocol2Batch(actions, stopOnError = true) {
@@ -464,21 +483,21 @@ export class PhoneRelay extends DurableObject {
       }
 
       try {
-        const context = {
-          package: screen?.package,
-          revision: screen?.revision,
-          editor: this.focusedEditor(screen),
+        const executed = await this.executeProtocol2CompatibilityStep(String(item.action || ""), item.args || {}, {
+          sessionId: observed.sessionId,
           screen,
-        };
-        const step = this.stepForProtocol2(String(item.action || ""), item.args || {}, context);
-        const job = await this.executeProtocol2Job(observed.sessionId, [step], false);
-        if (job?.screen) screen = job.screen;
+        });
+        const job = executed.job;
+        screen = executed.screen;
         if (job?.ok === false) {
           results.push({ index, ok: false, action: item.action, status: 422, error: job.error || job.outcome || "Android operation failed" });
           if (stopOnError) return { ok: false, results, screen };
           continue;
         }
-        results.push({ index, ok: true, action: item.action, result: job?.steps?.[0] || { completed: true } });
+        results.push({
+          index, ok: true, action: item.action,
+          result: { ...(job?.steps?.[0] || { completed: true }), ...(executed.recovered ? { recovered_from: "STALE_SCREEN" } : {}) },
+        });
       } catch (e) {
         results.push({ index, ok: false, action: item.action, status: e?.status || 500, error: e?.message || String(e) });
         if (stopOnError) return { ok: false, results, screen };
