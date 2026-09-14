@@ -1,6 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 import { ACTIONS, DEFAULT_BLOCKED, PROTOCOL_2_ENDPOINTS } from "./config.js";
-import { selectPhoneSocket, socketMetadata } from "./phone-sockets.js";
+import { selectPhoneSocket, shouldAcceptPhoneSocket, socketMetadata } from "./phone-sockets.js";
 import { json, secureEqual } from "./security.js";
 
 export class PhoneRelay extends DurableObject {
@@ -121,10 +121,14 @@ export class PhoneRelay extends DurableObject {
       await this.clearFailures("device", ip);
 
       const oldSockets = this.ctx.getWebSockets("phone");
+      const protocol = Number(request.headers.get("X-WorkDroid-Protocol") || 1);
+      const current = selectPhoneSocket(oldSockets);
+      if (!shouldAcceptPhoneSocket(current, protocol)) {
+        return new Response("A newer WorkDroid bridge protocol is already connected", { status: 409 });
+      }
       const pair = new WebSocketPair();
       const client = pair[0], server = pair[1];
       this.ctx.acceptWebSocket(server, ["phone"]);
-      const protocol = Number(request.headers.get("X-WorkDroid-Protocol") || 1);
       const sessionId = String(request.headers.get("X-WorkDroid-Session") || "");
       const bridgeVersion = String(request.headers.get("X-WorkDroid-Bridge") || "legacy");
       if (protocol >= 2 && !sessionId) {
