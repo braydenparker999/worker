@@ -13,7 +13,7 @@ async function relayJson(stub, path, body) {
     body: body === undefined ? undefined : JSON.stringify(body),
   }));
   const data = await response.json().catch(() => ({ error: `Relay returned HTTP ${response.status}` }));
-  if (!response.ok || data.ok === false) {
+  if (!response.ok) {
     throw new Error(data.error || `Relay returned HTTP ${response.status}`);
   }
   return data;
@@ -21,6 +21,7 @@ async function relayJson(stub, path, body) {
 
 async function action(stub, name, args = {}) {
   const data = await relayJson(stub, "/action", { action: name, args });
+  if (data.ok === false) throw new Error(data.error || `Android action failed: ${name}`);
   return data.result;
 }
 
@@ -33,6 +34,152 @@ function toolResult(summary, result) {
   return {
     structuredContent: { result },
     content: [{ type: "text", text: `${summary}\n${compactJson(result)}` }],
+  };
+}
+
+function nodeLabel(node) {
+  return String(node?.text || node?.contentDescription || node?.content_description || node?.label || "").trim();
+}
+
+function limitedText(value, max = 500) {
+  const text = String(value || "").trim();
+  return text.length <= max ? text : `${text.slice(0, max)}…`;
+}
+
+function compactNode(node, includeBounds = false) {
+  const out = {};
+  const id = node?.nodeId ?? node?.node_id ?? node?.id;
+  const text = limitedText(node?.text);
+  const description = limitedText(node?.contentDescription || node?.content_description);
+  const viewId = limitedText(node?.viewId ?? node?.view_id, 300);
+  const className = String(node?.className || node?.class_name || "");
+  if (id !== undefined) out.id = id;
+  if (text) out.text = text;
+  if (description && description !== text) out.description = description;
+  if (viewId) out.view_id = viewId;
+  if (className) out.role = className.split(".").pop();
+  const flags = ["clickable", "editable", "scrollable", "focused", "checked", "selected"]
+    .filter(key => node?.[key] === true);
+  if (flags.length) out.flags = flags;
+  if (includeBounds) {
+    const bounds = boundsOf(node);
+    if (bounds) out.bounds = bounds;
+  }
+  return out;
+}
+
+function screenNodes(screen) {
+  if (Array.isArray(screen?.nodes)) return screen.nodes;
+  if (Array.isArray(screen?.result?.nodes)) return screen.result.nodes;
+  return allObjects(screen).filter(node => node && (
+    node.nodeId !== undefined || node.node_id !== undefined
+  ));
+}
+
+export function summarizeScreen(screen, { includeBounds = false, maxNodes = 60, query = "", exact = false } = {}) {
+  const nodes = screenNodes(screen);
+  const needle = String(query || "").trim().toLocaleLowerCase();
+  const seen = new Set();
+  const useful = [];
+  for (const node of nodes) {
+    const label = nodeLabel(node);
+    const searchable = [label, node?.viewId, node?.view_id, node?.className, node?.class_name]
+      .filter(Boolean).join(" ").toLocaleLowerCase();
+    if (needle && (exact ? label.toLocaleLowerCase() !== needle : !searchable.includes(needle))) continue;
+    if (!needle && !label && !node?.clickable && !node?.editable && !node?.scrollable && !node?.focused) continue;
+    const compact = compactNode(node, includeBounds);
+    const key = JSON.stringify(compact);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    useful.push(compact);
+    if (useful.length >= maxNodes) break;
+  }
+  return {
+    package: screen?.package || screen?.packageName || screen?.result?.package || null,
+    accessibility_active: screen?.accessibilityService ?? screen?.accessibility_service ?? true,
+    total_nodes: nodes.length,
+    returned_nodes: useful.length,
+    truncated: useful.length < nodes.filter(node => {
+      const label = nodeLabel(node);
+      const searchable = [label, node?.viewId, node?.view_id, node?.className, node?.class_name]
+        .filter(Boolean).join(" ").toLocaleLowerCase();
+      return needle
+        ? (exact ? label.toLocaleLowerCase() === needle : searchable.includes(needle))
+        : !!(label || node?.clickable || node?.editable || node?.scrollable || node?.focused);
+    }).length,
+    nodes: useful,
+  };
+}
+
+function normalizeFlowArgs(actionName, args = {}) {
+  const normalized = { ...args };
+  if (actionName === "open_app") {
+    normalized.package = args.package ?? args.package_name;
+    delete normalized.package_name;
+  }
+  if (actionName === "screen" || actionName === "screen_summary") {
+    normalized.bounds = args.bounds ?? args.include_bounds ?? false;
+    delete normalized.include_bounds;
+    delete normalized.max_nodes;
+  }
+  if (actionName === "swipe") {
+    normalized.x1 = args.x1 ?? args.start_x;
+    normalized.y1 = args.y1 ?? args.start_y;
+    normalized.x2 = args.x2 ?? args.end_x;
+    normalized.y2 = args.y2 ?? args.end_y;
+    normalized.durationMs = args.durationMs ?? args.duration_ms ?? 350;
+    for (const key of ["start_x", "start_y", "end_x", "end_y", "duration_ms"]) delete normalized[key];
+  }
+  if (actionName === "wait" || actionName === "wait_for_text") {
+    normalized.timeoutMs = args.timeoutMs ?? args.timeout_ms ?? 5_000;
+    delete normalized.timeout_ms;
+  }
+  if (actionName === "find_controls") {
+    normalized.text = args.text ?? args.query;
+    normalized.bounds = args.bounds ?? args.include_bounds ?? true;
+    delete normalized.query;
+    delete normalized.include_bounds;
+    delete normalized.max_nodes;
+  }
+  return normalized;
+}
+
+export function normalizeFlowStep(step) {
+  const aliases = {
+    screen_summary: "screen",
+    type_text: "type",
+    wait_for_text: "wait",
+    find_controls: "find_nodes",
+  };
+  return {
+    action: aliases[step.action] || step.action,
+    args: normalizeFlowArgs(step.action, step.arguments || {}),
+  };
+}
+
+function compactFlowResults(data, steps) {
+  if (!Array.isArray(data?.results)) return data;
+  return {
+    ...data,
+    results: data.results.map(item => {
+      const step = steps[item.index] || {};
+      if (!item.ok) return item;
+      if (["screen", "screen_summary"].includes(step.action)) {
+        return { ...item, result: summarizeScreen(item.result, {
+          includeBounds: !!step.arguments?.include_bounds,
+          maxNodes: Number(step.arguments?.max_nodes || 60),
+        }) };
+      }
+      if (step.action === "find_controls") {
+        return { ...item, result: summarizeScreen(item.result, {
+          includeBounds: step.arguments?.include_bounds !== false,
+          maxNodes: Number(step.arguments?.max_nodes || 30),
+          query: step.arguments?.query || step.arguments?.text || "",
+          exact: !!step.arguments?.exact,
+        }) };
+      }
+      return item;
+    }),
   };
 }
 
@@ -141,9 +288,9 @@ async function seekMedia(stub, positionSeconds, suppliedDuration) {
 
 function createServer(stub) {
   const server = new McpServer(
-    { name: "workdroid", version: "0.2.0" },
+    { name: "workdroid", version: "0.3.0" },
     {
-      instructions: "WorkDroid controls the owner's connected Android phone. Inspect phone status and the current screen before ambiguous touches. Prefer semantic tools such as open_app, tap_text, media_control, and seek_media. Use run_flow only for short, deliberate sequences. Never claim an action succeeded unless the returned result confirms it. Sensitive packages are blocked by the relay.",
+      instructions: "WorkDroid controls the owner's connected Android phone. Prefer compact read_screen, find_controls, and screen_state over full accessibility trees. Use run_flow for short deliberate sequences so several actions share one relay request. Never claim an action succeeded unless the returned result confirms it. Sensitive packages are blocked by the relay.",
     },
   );
 
@@ -163,12 +310,65 @@ function createServer(stub) {
 
   server.registerTool("read_screen", {
     title: "Read Android screen",
-    description: "Use this to inspect the current Android accessibility tree before choosing a control or reporting what is visible.",
+    description: "Use this to inspect the current Android screen. Compact mode is the fast default; request full only for low-level debugging.",
     inputSchema: {
       include_bounds: z.boolean().optional().default(false).describe("Include touch coordinates and node rectangles when interaction is needed."),
+      detail: z.enum(["compact", "full"]).optional().default("compact"),
+      max_nodes: z.number().int().min(10).max(200).optional().default(60),
     },
     annotations: READ_ONLY,
-  }, async ({ include_bounds }) => toolResult("Current Android accessibility tree", await action(stub, "screen", { bounds: include_bounds })));
+  }, async ({ include_bounds, detail, max_nodes }) => {
+    const result = await action(stub, "screen", { bounds: include_bounds });
+    return toolResult(detail === "full" ? "Full Android accessibility tree" : "Compact Android screen", detail === "full"
+      ? result
+      : summarizeScreen(result, { includeBounds: include_bounds, maxNodes: max_nodes }));
+  });
+
+  server.registerTool("find_controls", {
+    title: "Find visible Android controls",
+    description: "Use this instead of reading the whole screen when you know part of a label, description, view ID, or control type.",
+    inputSchema: {
+      query: z.string().min(1).max(300),
+      exact: z.boolean().optional().default(false),
+      include_bounds: z.boolean().optional().default(true),
+      max_nodes: z.number().int().min(1).max(100).optional().default(30),
+    },
+    annotations: READ_ONLY,
+  }, async ({ query, exact, include_bounds, max_nodes }) => {
+    let result;
+    try {
+      result = await action(stub, "find_nodes", { text: query, exact, bounds: include_bounds });
+    } catch {
+      result = await action(stub, "screen", { bounds: include_bounds });
+    }
+    return toolResult(`Android controls matching: ${query}`, summarizeScreen(result, {
+      includeBounds: include_bounds, maxNodes: max_nodes, query, exact,
+    }));
+  });
+
+  server.registerTool("screen_state", {
+    title: "Check Android screen state",
+    description: "Use this for polling. With a previous hash it returns immediately when the visible screen has not changed, avoiding another full tree in the response.",
+    inputSchema: {
+      previous_hash: z.string().max(500).optional(),
+      include_bounds: z.boolean().optional().default(false),
+      max_nodes: z.number().int().min(10).max(200).optional().default(60),
+    },
+    annotations: READ_ONLY,
+  }, async ({ previous_hash, include_bounds, max_nodes }) => {
+    const state = await action(stub, "screen_hash");
+    const rawHash = state?.hash ?? state?.screenHash ?? state?.screen_hash;
+    const currentHash = String(rawHash ?? JSON.stringify(state ?? null));
+    if (previous_hash && currentHash === previous_hash) {
+      return toolResult("Android screen is unchanged", { changed: false, hash: currentHash });
+    }
+    const screen = await action(stub, "screen", { bounds: include_bounds });
+    return toolResult("Android screen state", {
+      changed: previous_hash ? currentHash !== previous_hash : null,
+      hash: currentHash,
+      screen: summarizeScreen(screen, { includeBounds: include_bounds, maxNodes: max_nodes }),
+    });
+  });
 
   server.registerTool("capture_screen", {
     title: "Capture Android screen",
@@ -264,7 +464,7 @@ function createServer(stub) {
     annotations: NAVIGATION,
   }, async ({ position_seconds, duration_seconds }) => toolResult("Media seek completed", await seekMedia(stub, position_seconds, duration_seconds)));
 
-  const flowActions = ["screen", "current_app", "open_app", "press_key", "tap", "tap_text", "type", "swipe", "wait", "media"];
+  const flowActions = ["screen_summary", "screen", "current_app", "open_app", "press_key", "tap", "tap_text", "type_text", "type", "swipe", "wait_for_text", "wait", "media", "find_controls", "screen_hash"];
   server.registerTool("run_flow", {
     title: "Run Android action flow",
     description: "Use this for a short, ordered Android workflow that benefits from one reliable relay round trip. Prefer focused tools for single actions.",
@@ -278,10 +478,10 @@ function createServer(stub) {
     annotations: CONSEQUENTIAL,
   }, async ({ steps, stop_on_error }) => {
     const data = await relayJson(stub, "/batch", {
-      actions: steps.map(step => ({ action: step.action, args: step.arguments })),
+      actions: steps.map(normalizeFlowStep),
       stop_on_error,
     });
-    return toolResult("Android flow results", data);
+    return toolResult("Android flow results", compactFlowResults(data, steps));
   });
 
   return server;
@@ -296,4 +496,3 @@ export async function handleMcp(request, stub, authInfo) {
   await server.connect(transport);
   return transport.handleRequest(request, { authInfo });
 }
-

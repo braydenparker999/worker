@@ -1,4 +1,4 @@
-# WorkDroid Relay — Cloudflare v0.2
+# WorkDroid Relay — Cloudflare v0.3
 
 This is the preferred always-available relay for the Android/ChatGPT Work experiment.
 
@@ -31,6 +31,14 @@ The `/mcp` endpoint advertises focused tools with schemas and safety annotations
 - tap by accessible text or coordinates, text entry, and swipes
 - media controls and semantic absolute-time media seeking
 - compound flows of up to 20 approved actions in one relay round trip
+
+v0.3 makes interactive control substantially leaner:
+
+- `read_screen` returns a compact, deduplicated list of useful controls by default
+- `find_controls` searches for a known label or control without sending the full tree to ChatGPT
+- `screen_state` uses screen hashes to make unchanged-screen polling cheap
+- `run_flow` accepts friendly tool argument names, preserves per-step errors, and compacts screen results
+- relay safety checks are reused within a batch instead of adding a hidden phone round trip before nearly every step
 
 The existing `/control` page also exposes the lower-level relay actions:
 

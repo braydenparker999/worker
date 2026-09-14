@@ -1,11 +1,12 @@
 {
   "name": "workdroid-relay",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
+    "test": "node test/mcp-unit.mjs",
     "test:mcp": "node test/mcp-smoke.mjs"
   },
   "devDependencies": {

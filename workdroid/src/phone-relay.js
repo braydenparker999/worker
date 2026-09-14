@@ -140,7 +140,7 @@ export class PhoneRelay extends DurableObject {
     if (url.pathname === "/action" && request.method === "POST") {
       const body = await request.json().catch(() => ({}));
       try {
-        const result = await this.executeAction(String(body.action || ""), body.args || {});
+          const result = await this.executeAction(String(body.action || ""), body.args || {});
         return json({ ok: true, action: body.action, result });
       } catch (e) {
         return json({ ok: false, error: e?.message || String(e) }, e?.status || 500);
@@ -154,10 +154,13 @@ export class PhoneRelay extends DurableObject {
         return json({ error: "actions must contain 1..30 items" }, 400);
       }
       const results = [];
+      // Reuse a known-safe foreground package across adjacent batch steps.
+      // Actions that can cross an app boundary invalidate the cache below.
+      const safetyContext = { checked: false, currentPackage: null };
       for (let i = 0; i < actions.length; i++) {
         const item = actions[i] || {};
         try {
-          const result = await this.executeAction(String(item.action || ""), item.args || {});
+          const result = await this.executeAction(String(item.action || ""), item.args || {}, safetyContext);
           results.push({ index: i, ok: true, action: item.action, result });
         } catch (e) {
           results.push({ index: i, ok: false, action: item.action, status: e?.status || 500, error: e?.message || String(e) });
@@ -175,7 +178,7 @@ export class PhoneRelay extends DurableObject {
     return result?.package || result?.packageName || result?.currentPackage || null;
   }
 
-  async ensureSafe(action, args) {
+  async ensureSafe(action, args, context = null) {
     const blocked = this.blockedPackages();
     if (action === "open_app") {
       const pkg = String(args.package || "");
@@ -185,20 +188,44 @@ export class PhoneRelay extends DurableObject {
     }
     if (["apps", "current_app", "media"].includes(action)) return;
     if (action === "press_key" && String(args.key || "").toLowerCase() === "home") return;
-    const pkg = await this.currentPackage();
+    let pkg;
+    if (context?.checked) {
+      pkg = context.currentPackage;
+    } else {
+      pkg = await this.currentPackage();
+      if (context) {
+        context.checked = true;
+        context.currentPackage = pkg;
+      }
+    }
     if (pkg && blocked.has(pkg)) {
       throw Object.assign(new Error(`Current package blocked by relay policy: ${pkg}`), { status: 403 });
     }
   }
 
-  async executeAction(action, args) {
+  async executeAction(action, args, safetyContext = null) {
     if (!ACTIONS[action]) throw Object.assign(new Error(`Unknown or disabled action: ${action}`), { status: 400 });
     if (!args || typeof args !== "object" || Array.isArray(args)) {
       throw Object.assign(new Error("args must be an object"), { status: 400 });
     }
-    await this.ensureSafe(action, args);
+    await this.ensureSafe(action, args, safetyContext);
     const [method, path] = ACTIONS[action];
-    return this.dispatch(method, path, args);
+    const result = await this.dispatch(method, path, args);
+    if (safetyContext) {
+      if (action === "open_app") {
+        safetyContext.checked = true;
+        safetyContext.currentPackage = String(args.package || "") || null;
+      } else if (action === "current_app") {
+        safetyContext.checked = true;
+        safetyContext.currentPackage = result?.package || result?.packageName || result?.currentPackage || null;
+      } else if (["tap", "tap_text", "press_key"].includes(action)) {
+        // A tap or navigation key can launch another package. Force a fresh
+        // package check before the next protected action.
+        safetyContext.checked = false;
+        safetyContext.currentPackage = null;
+      }
+    }
+    return result;
   }
 
   async dispatch(method, path, args) {
