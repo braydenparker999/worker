@@ -44,6 +44,20 @@ The ChatGPT Android package plus common authenticator/password-manager packages 
 
 You need a Cloudflare account with Workers enabled. Durable Objects are available on the Workers Free plan when using SQLite-backed objects; this project uses a SQLite-class migration even though it stores almost nothing.
 
+### Recommended phone-only route: Workers Git integration
+
+From Cloudflare **Workers & Pages**, create/import a Worker from GitHub, select `braydenparker999/worker`, set the production branch to `workdroid-relay-v0.1`, and set the project/root directory to `workdroid`. Cloudflare will run from the included `package.json` and `wrangler.jsonc`.
+
+Add these three Worker secrets (real values must never be committed):
+
+- `DEVICE_TOKEN` — exactly the 6-character pairing code shown in Hermes Android Bridge.
+- `CONTROL_PASSWORD` — a long unique password used to sign into `/control`.
+- `SESSION_SECRET` — 32+ random bytes / 64+ hex characters used to sign the Work browser session.
+
+The included `.dev.vars.example` declares the required names.
+
+**Do not rely on the Deploy-to-Cloudflare button for this first test.** As of September 2026 there is a current open Cloudflare issue where the template flow can silently import only a placeholder. Use normal Workers Git integration or Wrangler instead.
+
 ### 1. Install Wrangler
 
 ```bash
