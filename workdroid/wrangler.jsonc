@@ -1,0 +1,19 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "workdroid-relay",
+  "main": "src/index.js",
+  "compatibility_date": "2026-09-13",
+  "durable_objects": {
+    "bindings": [
+      { "name": "PHONE_RELAY", "class_name": "PhoneRelay" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["PhoneRelay"] }
+  ],
+  "vars": {
+    "SESSION_TTL_SECONDS": "43200",
+    "COMMAND_TIMEOUT_MS": "25000",
+    "BLOCKED_PACKAGES": ""
+  }
+}
