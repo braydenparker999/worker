@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { normalizeFlowStep, summarizeScreen, verifiedActionResult, WORKDROID_VERSION } from "../src/mcp.js";
-import { selectPhoneSocket } from "../src/phone-sockets.js";
+import { selectPhoneSocket, shouldAcceptPhoneSocket } from "../src/phone-sockets.js";
 
-assert.equal(WORKDROID_VERSION, "0.5.4");
+assert.equal(WORKDROID_VERSION, "0.5.5");
 
 assert.deepEqual(verifiedActionResult({ ok: true, result: { ok: true, completed: true } }, "tap"), {
   ok: true,
@@ -76,10 +76,10 @@ assert.deepEqual(normalizeFlowStep({
   arguments: { text: " world", replace_existing: false },
 }), { action: "type", args: { text: " world", clearFirst: false } });
 
-function socket(readyState, connectedAt) {
+function socket(readyState, connectedAt, protocol = 1) {
   return {
     readyState,
-    deserializeAttachment: () => ({ connectedAt }),
+    deserializeAttachment: () => ({ connectedAt, protocol }),
   };
 }
 
@@ -88,5 +88,9 @@ const openOld = socket(1, 200);
 const openNew = socket(1, 300);
 assert.equal(selectPhoneSocket([closingOld, openOld, openNew]), openNew);
 assert.equal(selectPhoneSocket([closingOld]), null);
+assert.equal(shouldAcceptPhoneSocket(socket(1, 100, 2), 1), false);
+assert.equal(shouldAcceptPhoneSocket(socket(1, 100, 2), 2), true);
+assert.equal(shouldAcceptPhoneSocket(socket(1, 100, 1), 2), true);
+assert.equal(shouldAcceptPhoneSocket(socket(2, 100, 2), 1), true);
 
 console.log("WorkDroid MCP unit tests passed.");
