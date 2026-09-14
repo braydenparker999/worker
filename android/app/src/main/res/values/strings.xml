@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">WorkDroid Bridge</string>
+    <string name="accessibility_description">Allows WorkDroid to read and control Android UI after you explicitly enable the service.</string>
+</resources>
