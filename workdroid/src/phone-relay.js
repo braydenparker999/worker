@@ -335,7 +335,9 @@ export class PhoneRelay extends DurableObject {
       return exact !== false ? candidate === needle : candidate.includes(needle);
     };
     if (nodes.some(node => matches(node?.text))) return { text: wanted, exact: exact !== false };
-    if (nodes.some(node => matches(node?.description))) return { description: wanted, exact: exact !== false };
+    if (nodes.some(node => matches(node?.description ?? node?.contentDescription ?? node?.content_description))) {
+      return { description: wanted, exact: exact !== false };
+    }
     return { text: wanted, exact: exact !== false };
   }
 
