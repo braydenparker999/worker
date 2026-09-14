@@ -1,8 +1,8 @@
-# WorkDroid Bridge Android v0.1
+# WorkDroid Next v1.1
 
 Purpose-built Android side of WorkDroid.
 
-This exists because the upstream Hermes Android v0.5.0 app starts a Ktor/Netty local HTTP server during `Application.onCreate()`. WorkDroid does not need an inbound LAN server at all: the phone only needs to connect outward to the Cloudflare relay.
+WorkDroid Next is the single protocol-2 Android client. It connects outward to the Cloudflare relay, executes guarded multi-step jobs locally, and never opens an inbound server.
 
 ## What this build intentionally removes
 
@@ -14,32 +14,32 @@ This exists because the upstream Hermes Android v0.5.0 app starts a Ktor/Netty l
 - overlay permission
 - MediaProjection foreground service
 
-## What remains
+## Capabilities
 
 - AccessibilityService UI tree
 - screenshots through AccessibilityService
-- tap / tap by text
-- type text
-- swipe / scroll / long press / drag
-- Back / Home / Recents / notifications / quick settings
+- semantic selectors over text, content descriptions, roles, view IDs, and control state
+- guarded tap, replace-text, keyboard editor actions, swipe, and scroll
+- Back and Home navigation
 - app launching
-- current app + installed launchable apps
-- wait/find/describe nodes
-- screen hashes
+- event-driven waits and assertions
+- revision-checked coordinate gestures
+- persistent operation journal for at-most-once execution
 - outbound WSS relay connection
+- foreground, network, accessibility, app-update, and reboot recovery
 
 ## Authentication
 
-WorkDroid generates a 256-bit random device token on first launch. Copy that token into the Cloudflare relay's `DEVICE_TOKEN` secret. This replaces Hermes' six-character pairing code.
+Enter the same 256-bit token configured as the Cloudflare relay's `DEVICE_TOKEN` secret. The token is stored privately on-device and blanked from the UI after starting.
 
 The app blocks ChatGPT, common authenticators, and common password managers at the Android command-dispatch layer in addition to relay-side filtering.
 
 ## First test
 
 1. Install the APK.
-2. Open WorkDroid Bridge.
-3. Tap **Enable Accessibility** and enable WorkDroid Bridge.
-4. Copy the device token and set it as the relay `DEVICE_TOKEN`.
-5. Enter the deployed WorkDroid relay HTTPS URL.
-6. Tap **Connect**.
+2. Open WorkDroid Next.
+3. Tap **Enable Accessibility** and enable WorkDroid Next.
+4. Enter the deployed relay origin and matching device token.
+5. Tap **Start control session** and allow notifications.
+6. Set WorkDroid Next to **Unrestricted** in Android battery settings.
 7. From ChatGPT Work, ask it to open Android Settings, choose Display, and report the resulting screen.

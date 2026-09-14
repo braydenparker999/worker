@@ -14,5 +14,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "WorkDroidBridge"
+rootProject.name = "WorkDroidNext"
 include(":app")

@@ -1,4 +1,4 @@
-name: Build WorkDroid Android
+name: Build WorkDroid Next
 
 on:
   push:
@@ -41,19 +41,19 @@ jobs:
         run: gradle --no-daemon assembleDebug
 
       - name: Prepare APK
-        run: cp android/app/build/outputs/apk/debug/app-debug.apk WorkDroid-Bridge-v0.1.apk
+        run: cp android/app/build/outputs/apk/debug/app-debug.apk WorkDroid-Next-v1.1.0-alpha2.apk
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: WorkDroid-Bridge-v0.1
-          path: WorkDroid-Bridge-v0.1.apk
+          name: WorkDroid-Next-v1.1.0-alpha2
+          path: WorkDroid-Next-v1.1.0-alpha2.apk
 
       - name: Publish prerelease APK
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: workdroid-android-v0.1-build
-          name: WorkDroid Bridge v0.1 test build
+          tag_name: workdroid-next-v1.1.0-alpha2
+          name: WorkDroid Next v1.1.0 alpha 2
           prerelease: true
           make_latest: false
-          files: WorkDroid-Bridge-v0.1.apk
+          files: WorkDroid-Next-v1.1.0-alpha2.apk

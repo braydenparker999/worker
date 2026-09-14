@@ -4,15 +4,15 @@ plugins {
 }
 
 android {
-    namespace = "com.workdroid.bridge"
+    namespace = "com.workdroid.next"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.workdroid.bridge"
+        applicationId = "com.workdroid.bridge.next"
         minSdk = 30
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "1.1.0-alpha2"
     }
 
     buildTypes {
