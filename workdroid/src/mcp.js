@@ -6,6 +6,8 @@ const READ_ONLY = { readOnlyHint: true, destructiveHint: false, openWorldHint: f
 const NAVIGATION = { readOnlyHint: false, destructiveHint: false, openWorldHint: false };
 const CONSEQUENTIAL = { readOnlyHint: false, destructiveHint: true, openWorldHint: false };
 
+export const WORKDROID_VERSION = "0.4.0";
+
 async function relayJson(stub, path, body) {
   const response = await stub.fetch(new Request(`https://relay.internal${path}`, {
     method: body === undefined ? "GET" : "POST",
@@ -292,7 +294,7 @@ async function seekMedia(stub, positionSeconds, suppliedDuration) {
 
 function createServer(stub) {
   const server = new McpServer(
-    { name: "workdroid", version: "0.3.0" },
+    { name: "workdroid", version: WORKDROID_VERSION },
     {
       instructions: "WorkDroid controls the owner's connected Android phone. Prefer compact read_screen, find_controls, and screen_state over full accessibility trees. Use run_flow for short deliberate sequences so several actions share one relay request. Never claim an action succeeded unless the returned result confirms it. Sensitive packages are blocked by the relay.",
     },
