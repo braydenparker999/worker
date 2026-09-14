@@ -1,8 +1,17 @@
 import assert from "node:assert/strict";
-import { normalizeFlowStep, summarizeScreen, WORKDROID_VERSION } from "../src/mcp.js";
+import { normalizeFlowStep, summarizeScreen, verifiedActionResult, WORKDROID_VERSION } from "../src/mcp.js";
 import { selectPhoneSocket } from "../src/phone-sockets.js";
 
-assert.equal(WORKDROID_VERSION, "0.5.3");
+assert.equal(WORKDROID_VERSION, "0.5.4");
+
+assert.deepEqual(verifiedActionResult({ ok: true, result: { ok: true, completed: true } }, "tap"), {
+  ok: true,
+  completed: true,
+});
+assert.throws(
+  () => verifiedActionResult({ ok: true, result: { ok: false, error: "STALE_SCREEN" } }, "tap"),
+  /STALE_SCREEN/,
+);
 
 const screen = {
   accessibilityService: true,
