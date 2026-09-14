@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { normalizeFlowStep, summarizeScreen, verifiedActionResult, WORKDROID_VERSION } from "../src/mcp.js";
 import { selectPhoneSocket, shouldAcceptPhoneSocket } from "../src/phone-sockets.js";
 
-assert.equal(WORKDROID_VERSION, "0.5.7");
+assert.equal(WORKDROID_VERSION, "0.5.8");
 
 assert.deepEqual(verifiedActionResult({ ok: true, result: { ok: true, completed: true } }, "tap"), {
   ok: true,
@@ -75,6 +75,16 @@ assert.deepEqual(normalizeFlowStep({
   action: "type_text",
   arguments: { text: " world", replace_existing: false },
 }), { action: "type", args: { text: " world", clearFirst: false } });
+
+assert.deepEqual(normalizeFlowStep({
+  action: "submit_text",
+  arguments: { action: "go" },
+}), { action: "editor_action", args: { editor_action: "go" } });
+
+assert.deepEqual(normalizeFlowStep({
+  action: "editor_action",
+  arguments: {},
+}), { action: "editor_action", args: { editor_action: "search" } });
 
 function socket(readyState, connectedAt, protocol = 1) {
   return {

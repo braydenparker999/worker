@@ -6,7 +6,7 @@ const READ_ONLY = { readOnlyHint: true, destructiveHint: false, openWorldHint: f
 const NAVIGATION = { readOnlyHint: false, destructiveHint: false, openWorldHint: false };
 const CONSEQUENTIAL = { readOnlyHint: false, destructiveHint: true, openWorldHint: false };
 
-export const WORKDROID_VERSION = "0.5.7";
+export const WORKDROID_VERSION = "0.5.8";
 
 async function relayJson(stub, path, body) {
   const response = await stub.fetch(new Request(`https://relay.internal${path}`, {
@@ -154,6 +154,10 @@ function normalizeFlowArgs(actionName, args = {}) {
     normalized.clearFirst = args.clearFirst ?? args.replace_existing ?? true;
     delete normalized.replace_existing;
   }
+  if (actionName === "editor_action" || actionName === "submit_text") {
+    normalized.editor_action = args.editor_action ?? args.action ?? "search";
+    delete normalized.action;
+  }
   return normalized;
 }
 
@@ -161,6 +165,7 @@ export function normalizeFlowStep(step) {
   const aliases = {
     screen_summary: "screen",
     type_text: "type",
+    submit_text: "editor_action",
     wait_for_text: "wait",
     find_controls: "find_nodes",
   };
@@ -545,6 +550,17 @@ function createServer(stub) {
     clearFirst: replace_existing,
   })));
 
+  server.registerTool("submit_text", {
+    title: "Submit focused Android field",
+    description: "Use this after typing to invoke the focused field's keyboard action without app-specific coordinates. Send is only appropriate when the user authorized sending.",
+    inputSchema: {
+      action: z.enum(["search", "go", "done", "send"]).optional().default("search"),
+    },
+    annotations: CONSEQUENTIAL,
+  }, async ({ action: editor_action }) => toolResult(`Invoked Android editor action: ${editor_action}`, await action(stub, "editor_action", {
+    editor_action,
+  })));
+
   server.registerTool("swipe", {
     title: "Swipe Android screen",
     description: "Use this for scrolling, seeking, or other gestures when coordinates are known.",
@@ -577,7 +593,7 @@ function createServer(stub) {
     annotations: NAVIGATION,
   }, async ({ position_seconds, duration_seconds }) => toolResult("Media seek completed", await seekMedia(stub, position_seconds, duration_seconds)));
 
-  const flowActions = ["screen_summary", "screen", "current_app", "open_app", "press_key", "tap", "tap_text", "type_text", "type", "swipe", "wait_for_text", "wait", "media", "find_controls", "screen_hash"];
+  const flowActions = ["screen_summary", "screen", "current_app", "open_app", "press_key", "tap", "tap_text", "type_text", "type", "submit_text", "editor_action", "swipe", "wait_for_text", "wait", "media", "find_controls", "screen_hash"];
   server.registerTool("run_flow", {
     title: "Run Android action flow",
     description: "Use this for a short, ordered Android workflow that benefits from one reliable relay round trip. Prefer focused tools for single actions.",

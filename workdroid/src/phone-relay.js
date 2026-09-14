@@ -395,6 +395,16 @@ export class PhoneRelay extends DurableObject {
       if (context.editor && !context.editor.hint) step.expected_text = currentText;
       return step;
     }
+    if (action === "editor_action") {
+      const editorAction = String(args.editor_action || args.action || "search").toLowerCase();
+      if (!["search", "go", "done", "send"].includes(editorAction)) {
+        throw Object.assign(new Error(`Unsupported Android editor action: ${editorAction}`), { status: 400 });
+      }
+      return {
+        action: "editor_action", expected_package: expectedPackage,
+        target: args.target || { focused: true, editable: true }, editor_action: editorAction,
+      };
+    }
     if (action === "swipe") {
       return {
         action: "swipe", expected_package: expectedPackage, revision: String(args.revision || context.revision || ""),
