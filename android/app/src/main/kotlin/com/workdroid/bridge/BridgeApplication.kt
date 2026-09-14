@@ -9,6 +9,15 @@ class BridgeApplication : Application() {
         super.onCreate()
         PairingManager.init(this)
         RelayClient.init(this)
-        RelayClient.autoConnect()
+        if (!isWorkDroidNextInstalled()) RelayClient.autoConnect()
+    }
+
+    private fun isWorkDroidNextInstalled(): Boolean = runCatching {
+        packageManager.getPackageInfo(WORKDROID_NEXT_PACKAGE, 0)
+        true
+    }.getOrDefault(false)
+
+    private companion object {
+        const val WORKDROID_NEXT_PACKAGE = "com.workdroid.bridge.next"
     }
 }
