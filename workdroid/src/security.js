@@ -33,6 +33,15 @@ export function sameOrigin(request) {
   return !origin || origin === new URL(request.url).origin;
 }
 
+export function trustedOAuthOrigin(request) {
+  const origin = request.headers.get("Origin");
+  return !origin
+    || origin === "null"
+    || origin === new URL(request.url).origin
+    || origin === "https://chatgpt.com"
+    || origin === "https://chat.openai.com";
+}
+
 export function cookies(request) {
   const out = {};
   for (const part of (request.headers.get("Cookie") || "").split(";")) {

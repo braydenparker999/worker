@@ -2,7 +2,7 @@ import { PhoneRelay } from "./phone-relay.js";
 import { LOGIN_HTML, CONTROL_HTML } from "./ui.js";
 import {
   json, secureHeaders, clientIp, sameOrigin, cookies,
-  makeSession, validSession,
+  makeSession, validSession, trustedOAuthOrigin,
 } from "./security.js";
 import {
   protectedResourceMetadata,
@@ -57,7 +57,7 @@ export default {
       }
 
       if (url.pathname === "/oauth/authorize") {
-        if (request.method === "POST" && !sameOrigin(request)) {
+        if (request.method === "POST" && !trustedOAuthOrigin(request)) {
           return secureHeaders(oauthErrorResponse("Origin rejected", 403));
         }
         return secureHeaders(await handleAuthorize(request, stub));

@@ -38,10 +38,17 @@ assert.equal(authorizePage.status, 200);
 assert.match(await authorizePage.text(), /Authorize ChatGPT/);
 
 authorizeParams.set("password", password);
+const rejectedOrigin = await fetch(`${base}/oauth/authorize`, {
+  method: "POST",
+  headers: { "content-type": "application/x-www-form-urlencoded", origin: "https://malicious.example" },
+  body: authorizeParams,
+});
+assert.equal(rejectedOrigin.status, 403);
+
 const authorizeResponse = await fetch(`${base}/oauth/authorize`, {
   method: "POST",
   redirect: "manual",
-  headers: { "content-type": "application/x-www-form-urlencoded", origin: base },
+  headers: { "content-type": "application/x-www-form-urlencoded", origin: "https://chatgpt.com" },
   body: authorizeParams,
 });
 assert.equal(authorizeResponse.status, 302);
@@ -114,4 +121,3 @@ assert.equal(refreshResponse.status, 200);
 assert.ok((await refreshResponse.json()).access_token);
 
 console.log(`WorkDroid MCP smoke test passed (${names.length} tools).`);
-
