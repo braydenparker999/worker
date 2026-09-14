@@ -1,0 +1,2 @@
+https://dash.cloudflare.com/oauth2/device/verify?user_code=taLfqVbm
+taLfqVbm
