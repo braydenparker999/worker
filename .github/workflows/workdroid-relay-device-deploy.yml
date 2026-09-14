@@ -26,7 +26,25 @@ jobs:
           cache-dependency-path: workdroid/package-lock.json
       - run: npm ci
       - run: npm test
-      - name: Authorize Wrangler
-        run: script -q -e -c "npx wrangler login --device" /dev/null
+      - name: Start Wrangler device authorization
+        run: |
+          nohup script -q -e -c "npx wrangler login --device" /tmp/wrangler-device.log >/tmp/wrangler-device.out 2>&1 &
+          echo $! >/tmp/wrangler-device.pid
+          for attempt in {1..20}; do
+            if grep -q "enter the code" /tmp/wrangler-device.out; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat /tmp/wrangler-device.out
+          exit 1
+      - name: Publish one-time approval code
+        uses: actions/upload-artifact@v4
+        with:
+          name: wrangler-device-code
+          path: /tmp/wrangler-device.out
+          retention-days: 1
+      - name: Wait for Cloudflare approval
+        run: timeout 330 tail --pid="$(cat /tmp/wrangler-device.pid)" -f /dev/null
       - name: Deploy WorkDroid relay
         run: npx wrangler deploy
