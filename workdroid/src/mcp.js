@@ -6,7 +6,7 @@ const READ_ONLY = { readOnlyHint: true, destructiveHint: false, openWorldHint: f
 const NAVIGATION = { readOnlyHint: false, destructiveHint: false, openWorldHint: false };
 const CONSEQUENTIAL = { readOnlyHint: false, destructiveHint: true, openWorldHint: false };
 
-export const WORKDROID_VERSION = "0.5.0";
+export const WORKDROID_VERSION = "0.5.1";
 
 async function relayJson(stub, path, body) {
   const response = await stub.fetch(new Request(`https://relay.internal${path}`, {

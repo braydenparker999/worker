@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { normalizeFlowStep, summarizeScreen, WORKDROID_VERSION } from "../src/mcp.js";
 import { selectPhoneSocket } from "../src/phone-sockets.js";
 
-assert.equal(WORKDROID_VERSION, "0.5.0");
+assert.equal(WORKDROID_VERSION, "0.5.1");
 
 const screen = {
   accessibilityService: true,
