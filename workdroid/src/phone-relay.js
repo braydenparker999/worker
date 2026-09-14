@@ -185,7 +185,7 @@ export class PhoneRelay extends DurableObject {
         const phone = this.phone();
         const protocol = Number(phone ? socketMetadata(phone).protocol || 1 : 1);
         const result = protocol >= 2
-          ? await this.dispatchV2("/apps", {})
+          ? await this.appsProtocol2()
           : await this.dispatch("GET", "/apps", {});
         return json({ ok: true, result });
       } catch (e) {
@@ -310,6 +310,18 @@ export class PhoneRelay extends DurableObject {
     return this.protocol2Observation(await this.dispatchV2("/observe", { screenshot }));
   }
 
+  async appsProtocol2() {
+    try {
+      return await this.dispatchV2("/apps", {});
+    } catch (error) {
+      // Android's first PackageManager label scan can exceed the bridge's
+      // 2.5-second UI-thread guard. A second read benefits from the warmed
+      // package cache and is safe because app discovery is read-only.
+      if (!String(error?.message || error).includes("ANDROID_CALL_TIMEOUT")) throw error;
+      return this.dispatchV2("/apps", {});
+    }
+  }
+
   async executeProtocol2Job(sessionId, steps, screenshot = false, timeoutMs = 15_000) {
     const now = Date.now();
     return this.dispatchV2("/execute", {
@@ -406,7 +418,7 @@ export class PhoneRelay extends DurableObject {
   }
 
   async executeProtocol2Action(action, args = {}) {
-    if (action === "apps") return this.dispatchV2("/apps", {});
+    if (action === "apps") return this.appsProtocol2();
     const observed = await this.observeProtocol2(action === "screenshot");
     if (action === "screen" || action === "find_nodes") return observed.screen;
     if (action === "current_app") return { package: observed.screen?.package || null, revision: observed.screen?.revision || null };
