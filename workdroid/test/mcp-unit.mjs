@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { normalizeFlowStep, summarizeScreen } from "../src/mcp.js";
+import { selectPhoneSocket } from "../src/phone-sockets.js";
 
 const screen = {
   accessibilityService: true,
@@ -42,5 +43,28 @@ assert.deepEqual(normalizeFlowStep({
   action: "find_controls",
   arguments: { query: "Send", include_bounds: true, max_nodes: 5 },
 }), { action: "find_nodes", args: { text: "Send", bounds: true } });
+
+assert.deepEqual(normalizeFlowStep({
+  action: "type_text",
+  arguments: { text: "Hello" },
+}), { action: "type", args: { text: "Hello", clearFirst: true } });
+
+assert.deepEqual(normalizeFlowStep({
+  action: "type_text",
+  arguments: { text: " world", replace_existing: false },
+}), { action: "type", args: { text: " world", clearFirst: false } });
+
+function socket(readyState, connectedAt) {
+  return {
+    readyState,
+    deserializeAttachment: () => ({ connectedAt }),
+  };
+}
+
+const closingOld = socket(2, 100);
+const openOld = socket(1, 200);
+const openNew = socket(1, 300);
+assert.equal(selectPhoneSocket([closingOld, openOld, openNew]), openNew);
+assert.equal(selectPhoneSocket([closingOld]), null);
 
 console.log("WorkDroid MCP unit tests passed.");

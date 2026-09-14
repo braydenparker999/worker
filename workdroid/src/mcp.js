@@ -141,6 +141,10 @@ function normalizeFlowArgs(actionName, args = {}) {
     delete normalized.include_bounds;
     delete normalized.max_nodes;
   }
+  if (actionName === "type" || actionName === "type_text") {
+    normalized.clearFirst = args.clearFirst ?? args.replace_existing ?? true;
+    delete normalized.replace_existing;
+  }
   return normalized;
 }
 
@@ -427,10 +431,16 @@ function createServer(stub) {
 
   server.registerTool("type_text", {
     title: "Type on Android",
-    description: "Use this to enter text into the currently focused Android field. It does not press Send or submit by itself.",
-    inputSchema: { text: z.string().min(1).max(4_000) },
+    description: "Use this to enter text into the currently focused Android field. It replaces existing field content by default and does not press Send or submit by itself.",
+    inputSchema: {
+      text: z.string().min(1).max(4_000),
+      replace_existing: z.boolean().optional().default(true),
+    },
     annotations: CONSEQUENTIAL,
-  }, async ({ text }) => toolResult("Entered text into the focused field", await action(stub, "type", { text })));
+  }, async ({ text, replace_existing }) => toolResult("Entered text into the focused field", await action(stub, "type", {
+    text,
+    clearFirst: replace_existing,
+  })));
 
   server.registerTool("swipe", {
     title: "Swipe Android screen",

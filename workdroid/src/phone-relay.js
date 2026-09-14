@@ -1,5 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 import { ACTIONS, DEFAULT_BLOCKED } from "./config.js";
+import { selectPhoneSocket } from "./phone-sockets.js";
 import { json, secureEqual } from "./security.js";
 
 export class PhoneRelay extends DurableObject {
@@ -11,8 +12,7 @@ export class PhoneRelay extends DurableObject {
   }
 
   phone() {
-    const sockets = this.ctx.getWebSockets("phone");
-    return sockets.length ? sockets[0] : null;
+    return selectPhoneSocket(this.ctx.getWebSockets("phone"));
   }
 
   blockedPackages() {
@@ -120,13 +120,14 @@ export class PhoneRelay extends DurableObject {
       }
       await this.clearFailures("device", ip);
 
-      for (const old of this.ctx.getWebSockets("phone")) {
-        try { old.close(1012, "Replaced by new phone connection"); } catch {}
-      }
+      const oldSockets = this.ctx.getWebSockets("phone");
       const pair = new WebSocketPair();
       const client = pair[0], server = pair[1];
       this.ctx.acceptWebSocket(server, ["phone"]);
       server.serializeAttachment({ role: "phone", connectedAt: Date.now() });
+      for (const old of oldSockets) {
+        try { old.close(1012, "Replaced by new phone connection"); } catch {}
+      }
       return new Response(null, { status: 101, webSocket: client });
     }
 
@@ -245,23 +246,25 @@ export class PhoneRelay extends DurableObject {
         this.pending.delete(requestId);
         reject(Object.assign(new Error(`Phone command timed out: ${method} ${path}`), { status: 504 }));
       }, timeoutMs);
-      this.pending.set(requestId, { resolve, reject, timer });
+      this.pending.set(requestId, { resolve, reject, timer, socket: ws });
       try {
         ws.send(JSON.stringify(command));
       } catch (e) {
         clearTimeout(timer);
         this.pending.delete(requestId);
+        try { ws.close(1011, "Relay send failed"); } catch {}
         reject(Object.assign(new Error(`WebSocket send failed: ${e?.message || e}`), { status: 502 }));
       }
     });
   }
 
-  async webSocketMessage(_ws, message) {
+  async webSocketMessage(ws, message) {
     if (typeof message !== "string") return;
     let data;
     try { data = JSON.parse(message); } catch { return; }
     const pending = this.pending.get(data.request_id);
     if (!pending) return;
+    if (pending.socket !== ws) return;
     clearTimeout(pending.timer);
     this.pending.delete(data.request_id);
     const status = Number(data.status || 200);
@@ -272,19 +275,20 @@ export class PhoneRelay extends DurableObject {
     }
   }
 
-  failPending(message) {
+  failPending(message, socket = null) {
     for (const [id, p] of this.pending) {
+      if (socket && p.socket !== socket) continue;
       clearTimeout(p.timer);
       p.reject(Object.assign(new Error(message), { status: 503 }));
       this.pending.delete(id);
     }
   }
 
-  async webSocketClose(_ws, code, reason) {
-    this.failPending(`Android bridge disconnected (${code}: ${reason || "closed"})`);
+  async webSocketClose(ws, code, reason) {
+    this.failPending(`Android bridge disconnected (${code}: ${reason || "closed"})`, ws);
   }
 
-  async webSocketError(_ws, error) {
-    this.failPending(`Android bridge WebSocket error: ${error?.message || error}`);
+  async webSocketError(ws, error) {
+    this.failPending(`Android bridge WebSocket error: ${error?.message || error}`, ws);
   }
 }

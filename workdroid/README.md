@@ -1,4 +1,4 @@
-# WorkDroid Relay — Cloudflare v0.3
+# WorkDroid Relay — Cloudflare v0.4
 
 This is the preferred always-available relay for the Android/ChatGPT Work experiment.
 
@@ -21,7 +21,7 @@ ChatGPT Work -- OAuth + MCP --> Cloudflare Worker
 
 A normal always-on server can stay billable just because the phone keeps a WebSocket open. Durable Objects' **WebSocket Hibernation API** keeps the client connection alive while allowing the object to sleep when idle. That is unusually well matched to a phone agent that may sit idle for hours between commands.
 
-## What v0.2 exposes to Work
+## What v0.4 exposes to Work
 
 The `/mcp` endpoint advertises focused tools with schemas and safety annotations:
 
@@ -39,6 +39,13 @@ v0.3 makes interactive control substantially leaner:
 - `screen_state` uses screen hashes to make unchanged-screen polling cheap
 - `run_flow` accepts friendly tool argument names, preserves per-step errors, and compacts screen results
 - relay safety checks are reused within a batch instead of adding a hidden phone round trip before nearly every step
+
+v0.4 hardens everyday control reliability:
+
+- the relay selects the newest open phone socket instead of a stale closing connection
+- late close/error events only fail commands sent through that same socket
+- text entry replaces the focused field by default, avoiding accessibility labels being prefixed to drafts
+- callers can set `replace_existing: false` when intentional append behavior is needed
 
 The existing `/control` page also exposes the lower-level relay actions:
 
