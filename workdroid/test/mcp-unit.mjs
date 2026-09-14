@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { normalizeFlowStep, summarizeScreen, WORKDROID_VERSION } from "../src/mcp.js";
 import { selectPhoneSocket } from "../src/phone-sockets.js";
 
-assert.equal(WORKDROID_VERSION, "0.5.1");
+assert.equal(WORKDROID_VERSION, "0.5.2");
 
 const screen = {
   accessibilityService: true,
@@ -12,15 +12,26 @@ const screen = {
     { nodeId: "0.0", className: "android.widget.Button", text: "Send", clickable: true, bounds: { left: 10, top: 20, right: 110, bottom: 70 } },
     { nodeId: "0.1", className: "android.widget.TextView", text: "Hello", clickable: false },
     { nodeId: "0.2", className: "android.widget.Button", contentDescription: "Send", clickable: true },
+    { node_id: "0.3", role: "ImageButton", description: "Search Marketplace", clickable: true },
   ],
 };
 
 const summary = summarizeScreen(screen, { includeBounds: true });
 assert.equal(summary.package, "com.example");
-assert.equal(summary.total_nodes, 4);
-assert.equal(summary.returned_nodes, 3);
+assert.equal(summary.total_nodes, 5);
+assert.equal(summary.returned_nodes, 4);
 assert.equal(summary.nodes[0].text, "Send");
 assert.deepEqual(summary.nodes[0].bounds, { left: 10, top: 20, right: 110, bottom: 70 });
+assert.deepEqual(summary.nodes[3], {
+  id: "0.3",
+  description: "Search Marketplace",
+  role: "ImageButton",
+  flags: ["clickable"],
+});
+
+const described = summarizeScreen(screen, { query: "marketplace", exact: false });
+assert.equal(described.returned_nodes, 1);
+assert.equal(described.nodes[0].description, "Search Marketplace");
 
 const filtered = summarizeScreen(screen, { query: "hello" });
 assert.equal(filtered.returned_nodes, 1);
