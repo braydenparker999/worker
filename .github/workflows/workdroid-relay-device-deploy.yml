@@ -1,0 +1,32 @@
+name: One-time WorkDroid Wrangler deploy
+
+on:
+  push:
+    branches:
+      - workdroid-relay-v0.1
+    paths:
+      - ".github/workflows/workdroid-relay-device-deploy.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: workdroid
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: workdroid/package-lock.json
+      - run: npm ci
+      - run: npm test
+      - name: Authorize Wrangler
+        run: script -q -e -c "npx wrangler login --device" /dev/null
+      - name: Deploy WorkDroid relay
+        run: npx wrangler deploy
