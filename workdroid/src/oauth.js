@@ -69,6 +69,18 @@ function oauthError(error, description, status = 400) {
   return json({ error, error_description: description }, status);
 }
 
+async function recordOAuthEvent(stub, stage, details = {}) {
+  try {
+    await stub.fetch(new Request("https://relay.internal/oauth/event", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ stage, details }),
+    }));
+  } catch {
+    // Diagnostics must never interrupt authorization.
+  }
+}
+
 function requestedScopes(value) {
   return new Set(String(value || CONTROL_SCOPE).trim().split(/\s+/).filter(Boolean));
 }
@@ -112,7 +124,13 @@ function authorizeHtml(params, error = "") {
   const names = ["response_type", "client_id", "redirect_uri", "state", "scope", "resource", "code_challenge", "code_challenge_method"];
   const hidden = names.map(name => `<input type="hidden" name="${name}" value="${escapeHtml(params.get(name) || "")}">`).join("");
   const errorHtml = error ? `<p class="error">${escapeHtml(error)}</p>` : "";
-  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Authorize WorkDroid</title><style>:root{color-scheme:dark}body{font-family:system-ui,sans-serif;background:#0d0d0d;color:#eee;display:grid;place-items:center;min-height:100vh;margin:0}main{width:min(92vw,440px);background:#191919;border:1px solid #353535;border-radius:18px;padding:24px;box-sizing:border-box}h1{font-size:22px;margin:0 0 10px}.muted{color:#aaa}.scope{background:#0e0e0e;border:1px solid #333;border-radius:10px;padding:12px;margin:16px 0}.error{color:#ff9999}input,button{width:100%;box-sizing:border-box;font:inherit;border-radius:10px;padding:12px}input{background:#090909;color:#fff;border:1px solid #444;margin:10px 0 12px}button{border:0;background:#eee;color:#111;font-weight:750;cursor:pointer}</style></head><body><main><h1>Connect WorkDroid</h1><p class="muted">ChatGPT is requesting access to your private Android bridge.</p><div class="scope">Allow phone status, screen inspection, navigation, touch, text entry, app launch, media control, and approved multi-step flows.</div>${errorHtml}<form method="post" action="/oauth/authorize">${hidden}<input name="password" type="password" autocomplete="current-password" placeholder="WorkDroid control password" autofocus required><button type="submit">Authorize ChatGPT</button></form></main></body></html>`;
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Authorize WorkDroid</title><style>:root{color-scheme:dark}body{font-family:system-ui,sans-serif;background:#0d0d0d;color:#eee;display:grid;place-items:center;min-height:100vh;margin:0}main{width:min(92vw,440px);background:#191919;border:1px solid #353535;border-radius:18px;padding:24px;box-sizing:border-box}h1{font-size:22px;margin:0 0 10px}.muted{color:#aaa}.scope{background:#0e0e0e;border:1px solid #333;border-radius:10px;padding:12px;margin:16px 0}.error{color:#ff9999}input,button{width:100%;box-sizing:border-box;font:inherit;border-radius:10px;padding:12px}input{background:#090909;color:#fff;border:1px solid #444;margin:10px 0 12px}button{border:0;background:#eee;color:#111;font-weight:750;cursor:pointer}button:disabled{opacity:.65;cursor:wait}.progress{display:none;color:#bbb;text-align:center;margin:12px 0 0}</style></head><body><main><h1>Connect WorkDroid</h1><p class="muted">ChatGPT is requesting access to your private Android bridge.</p><div class="scope">Allow phone status, screen inspection, navigation, touch, text entry, app launch, media control, and approved multi-step flows.</div>${errorHtml}<form id="authorize" method="post" action="/oauth/authorize">${hidden}<input name="password" type="password" autocomplete="current-password" placeholder="WorkDroid control password" autofocus required><button type="submit">Authorize ChatGPT</button><p id="progress" class="progress">Authorizing and returning to ChatGPT…</p></form></main><script>document.getElementById('authorize').addEventListener('submit',function(){var b=this.querySelector('button');b.disabled=true;b.textContent='Authorizing…';document.getElementById('progress').style.display='block'})</script></body></html>`;
+}
+
+function authorizationCompleteHtml(redirectUrl) {
+  const href = escapeHtml(redirectUrl);
+  const target = JSON.stringify(redirectUrl).replace(/</g, "\\u003c");
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Return to ChatGPT</title><style>:root{color-scheme:dark}body{font-family:system-ui,sans-serif;background:#0d0d0d;color:#eee;display:grid;place-items:center;min-height:100vh;margin:0}main{width:min(92vw,440px);background:#191919;border:1px solid #353535;border-radius:18px;padding:24px;box-sizing:border-box;text-align:center}h1{font-size:22px;margin:0 0 10px}.muted{color:#aaa}.button{display:block;background:#eee;color:#111;text-decoration:none;font-weight:750;border-radius:10px;padding:12px;margin-top:18px}</style></head><body><main><h1>WorkDroid authorized</h1><p class="muted">Returning you to ChatGPT…</p><a class="button" target="_top" href="${href}">Continue to ChatGPT</a></main><script>window.location.replace(${target})</script></body></html>`;
 }
 
 export function protectedResourceMetadata(request) {
@@ -158,17 +176,30 @@ export async function handleAuthorize(request, stub) {
     const params = new URL(request.url).searchParams;
     const error = validAuthorizeParams(params, request);
     if (error) return oauthError("invalid_request", error);
+    await recordOAuthEvent(stub, "authorize_page", {
+      client_id: params.get("client_id"),
+      redirect_uri: params.get("redirect_uri"),
+    });
     return new Response(authorizeHtml(params), { headers: { "content-type": "text/html; charset=utf-8" } });
   }
 
   if (request.method !== "POST") return new Response("Method not allowed", { status: 405 });
   const params = new URLSearchParams(await request.text());
+  await recordOAuthEvent(stub, "authorize_submit", {
+    client_id: params.get("client_id"),
+    redirect_uri: params.get("redirect_uri"),
+    request_origin: request.headers.get("Origin") || "missing",
+  });
   const error = validAuthorizeParams(params, request);
-  if (error) return oauthError("invalid_request", error);
+  if (error) {
+    await recordOAuthEvent(stub, "authorize_invalid", { error });
+    return oauthError("invalid_request", error);
+  }
 
   const passwordResult = await verifyControlPassword(stub, request, params.get("password") || "");
   if (!passwordResult.ok) {
     const message = passwordResult.status === 429 ? "Too many attempts. Try again later." : "Incorrect control password.";
+    await recordOAuthEvent(stub, "authorize_denied", { status: passwordResult.status });
     return new Response(authorizeHtml(params, message), {
       status: passwordResult.status,
       headers: { "content-type": "text/html; charset=utf-8" },
@@ -189,11 +220,22 @@ export async function handleAuthorize(request, stub) {
   const issued = await issue.json();
   if (!issue.ok) return oauthError("server_error", issued.error || "Could not issue authorization code", 500);
 
+  await recordOAuthEvent(stub, "authorization_code_issued", {
+    client_id: params.get("client_id"),
+    redirect_uri: params.get("redirect_uri"),
+  });
+
   const redirect = new URL(params.get("redirect_uri"));
   redirect.searchParams.set("code", issued.code);
   if (params.get("state")) redirect.searchParams.set("state", params.get("state"));
   redirect.searchParams.set("iss", canonical(request).issuer);
-  return Response.redirect(redirect.toString(), 302);
+  return new Response(authorizationCompleteHtml(redirect.toString()), {
+    status: 200,
+    headers: {
+      "content-type": "text/html; charset=utf-8",
+      "location": redirect.toString(),
+    },
+  });
 }
 
 async function pkceChallenge(verifier) {
@@ -225,11 +267,17 @@ export async function handleToken(request, env, stub) {
   const params = new URLSearchParams(await request.text());
   const { resource } = canonical(request);
   const grantType = params.get("grant_type");
+  await recordOAuthEvent(stub, "token_request", {
+    grant_type: grantType,
+    client_id: params.get("client_id"),
+    redirect_uri: params.get("redirect_uri"),
+  });
 
   if (grantType === "authorization_code") {
     const code = params.get("code") || "";
     const verifier = params.get("code_verifier") || "";
     if (!code || !/^[A-Za-z0-9._~-]{43,128}$/.test(verifier)) {
+      await recordOAuthEvent(stub, "token_invalid_request", { has_code: !!code, verifier_length: verifier.length });
       return oauthError("invalid_grant", "Invalid authorization code or PKCE verifier");
     }
 
@@ -239,15 +287,25 @@ export async function handleToken(request, env, stub) {
       body: JSON.stringify({ code }),
     }));
     const record = await exchange.json();
-    if (!exchange.ok) return oauthError("invalid_grant", record.error || "Authorization code is invalid or expired");
+    if (!exchange.ok) {
+      await recordOAuthEvent(stub, "token_exchange_failed", { error: record.error || "invalid code" });
+      return oauthError("invalid_grant", record.error || "Authorization code is invalid or expired");
+    }
 
     const suppliedResource = params.get("resource") || record.resource;
     if (record.client_id !== params.get("client_id") || record.redirect_uri !== params.get("redirect_uri") || suppliedResource !== record.resource || record.resource !== resource) {
+      await recordOAuthEvent(stub, "token_binding_failed", {
+        client_match: record.client_id === params.get("client_id"),
+        redirect_match: record.redirect_uri === params.get("redirect_uri"),
+        resource_match: suppliedResource === record.resource && record.resource === resource,
+      });
       return oauthError("invalid_grant", "Authorization code binding mismatch");
     }
     if (!await secureEqual(await pkceChallenge(verifier), record.code_challenge)) {
+      await recordOAuthEvent(stub, "pkce_failed");
       return oauthError("invalid_grant", "PKCE verification failed");
     }
+    await recordOAuthEvent(stub, "token_issued", { grant_type: "authorization_code" });
     return issueTokens(env, record);
   }
 
@@ -290,4 +348,3 @@ export async function authorizeMcpRequest(request, env) {
     },
   };
 }
-

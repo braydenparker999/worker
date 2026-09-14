@@ -93,6 +93,20 @@ export class PhoneRelay extends DurableObject {
       return json(record);
     }
 
+    if (url.pathname === "/oauth/event" && request.method === "POST") {
+      const body = await request.json().catch(() => ({}));
+      const stage = String(body.stage || "unknown").slice(0, 80);
+      const details = body.details && typeof body.details === "object" ? body.details : {};
+      const events = (await this.ctx.storage.get("oauth:events")) || [];
+      events.push({ stage, at: new Date().toISOString(), details });
+      await this.ctx.storage.put("oauth:events", events.slice(-25));
+      return json({ ok: true });
+    }
+
+    if (url.pathname === "/oauth/debug" && request.method === "GET") {
+      return json({ events: (await this.ctx.storage.get("oauth:events")) || [] });
+    }
+
     if (url.pathname === "/ws") {
       if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket") {
         return new Response("WebSocket required", { status: 426 });

@@ -51,7 +51,8 @@ const authorizeResponse = await fetch(`${base}/oauth/authorize`, {
   headers: { "content-type": "application/x-www-form-urlencoded", origin: "https://chatgpt.com" },
   body: authorizeParams,
 });
-assert.equal(authorizeResponse.status, 302);
+assert.equal(authorizeResponse.status, 200);
+assert.match(await authorizeResponse.text(), /Continue to ChatGPT/);
 const callback = new URL(authorizeResponse.headers.get("location"));
 assert.equal(callback.origin + callback.pathname, redirectUri);
 assert.equal(callback.searchParams.get("state"), "smoke-state");

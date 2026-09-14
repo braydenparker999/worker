@@ -2,7 +2,7 @@ import { PhoneRelay } from "./phone-relay.js";
 import { LOGIN_HTML, CONTROL_HTML } from "./ui.js";
 import {
   json, secureHeaders, clientIp, sameOrigin, cookies,
-  makeSession, validSession, trustedOAuthOrigin,
+  makeSession, validSession, trustedOAuthOrigin, secureEqual,
 } from "./security.js";
 import {
   protectedResourceMetadata,
@@ -46,6 +46,17 @@ export default {
         const r = await stub.fetch("https://relay.internal/status");
         const state = await r.json();
         return secureHeaders(json({ ok: true, phone_connected: !!state.phone_connected }));
+      }
+
+      if (url.pathname === "/debug/oauth" && request.method === "GET") {
+        if (!await secureEqual(request.headers.get("X-WorkDroid-Password") || "", env.CONTROL_PASSWORD)) {
+          return secureHeaders(new Response("Not found", { status: 404 }));
+        }
+        const r = await stub.fetch("https://relay.internal/oauth/debug");
+        return secureHeaders(new Response(r.body, {
+          status: r.status,
+          headers: { "content-type": "application/json; charset=utf-8" },
+        }));
       }
 
       if (["/.well-known/oauth-protected-resource", "/.well-known/oauth-protected-resource/mcp"].includes(url.pathname) && request.method === "GET") {
