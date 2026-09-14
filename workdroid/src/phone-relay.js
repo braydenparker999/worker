@@ -445,50 +445,50 @@ export class PhoneRelay extends DurableObject {
   async executeProtocol2Batch(actions, stopOnError = true) {
     let observed = await this.observeProtocol2(false);
     if (actions.some(item => item?.action === "open_app")) observed = await this.leaveBlockedPackage(observed);
-    const context = {
-      package: observed.screen?.package,
-      revision: observed.screen?.revision,
-      editor: this.focusedEditor(observed.screen),
-      screen: observed.screen,
-    };
-    const executable = [];
-    const mappedIndexes = [];
     const readOnly = new Set(["screen", "current_app", "find_nodes", "screen_hash"]);
     const results = [];
+    const executableCount = actions.filter(item => !readOnly.has(item?.action)).length;
+    if (executableCount > 12) {
+      return { ok: false, results: [{ index: 12, ok: false, status: 400, error: "Protocol 2 supports at most 12 executable steps" }] };
+    }
 
+    let screen = observed.screen;
     for (let index = 0; index < actions.length; index++) {
       const item = actions[index] || {};
-      if (readOnly.has(item.action)) continue;
+      if (readOnly.has(item.action)) {
+        const result = item.action === "current_app"
+          ? { package: screen?.package || null, revision: screen?.revision || null }
+          : item.action === "screen_hash" ? { hash: screen?.revision || null } : screen;
+        results.push({ index, ok: true, action: item.action, result });
+        continue;
+      }
+
       try {
+        const context = {
+          package: screen?.package,
+          revision: screen?.revision,
+          editor: this.focusedEditor(screen),
+          screen,
+        };
         const step = this.stepForProtocol2(String(item.action || ""), item.args || {}, context);
-        executable.push(step);
-        mappedIndexes.push(index);
-        if (item.action === "open_app") context.package = step.package_name;
+        const job = await this.executeProtocol2Job(observed.sessionId, [step], false);
+        if (job?.screen) screen = job.screen;
+        if (job?.ok === false) {
+          results.push({ index, ok: false, action: item.action, status: 422, error: job.error || job.outcome || "Android operation failed" });
+          if (stopOnError) return { ok: false, results, screen };
+          continue;
+        }
+        results.push({ index, ok: true, action: item.action, result: job?.steps?.[0] || { completed: true } });
       } catch (e) {
-        results.push({ index, ok: false, action: item.action, status: e?.status || 400, error: e?.message || String(e) });
-        if (stopOnError) return { ok: false, results };
+        results.push({ index, ok: false, action: item.action, status: e?.status || 500, error: e?.message || String(e) });
+        if (stopOnError) return { ok: false, results, screen };
+        try {
+          const refreshed = await this.observeProtocol2(false);
+          screen = refreshed.screen;
+        } catch {}
       }
     }
-
-    let job = null;
-    if (executable.length) {
-      if (executable.length > 12) return { ok: false, results: [{ index: 12, ok: false, status: 400, error: "Protocol 2 supports at most 12 executable steps" }] };
-      job = await this.executeProtocol2Job(observed.sessionId, executable, false);
-    }
-    const finalScreen = job?.screen || (await this.observeProtocol2(false)).screen;
-    const failedExecutableIndex = job?.ok === false ? Number(job.failed_index) : -1;
-    for (let index = 0; index < actions.length; index++) {
-      if (results.some(item => item.index === index)) continue;
-      const item = actions[index] || {};
-      const executableIndex = mappedIndexes.indexOf(index);
-      if (executableIndex >= 0 && failedExecutableIndex >= 0 && executableIndex >= failedExecutableIndex) {
-        results.push({ index, ok: false, action: item.action, status: 422, error: job?.error || job?.outcome || "Android operation failed" });
-      } else {
-        results.push({ index, ok: true, action: item.action, result: readOnly.has(item.action) ? finalScreen : job?.steps?.[executableIndex] || { completed: true } });
-      }
-    }
-    results.sort((a, b) => a.index - b.index);
-    return { ok: results.every(item => item.ok), results, screen: finalScreen };
+    return { ok: results.every(item => item.ok), results, screen };
   }
 
   async dispatch(method, path, args) {
