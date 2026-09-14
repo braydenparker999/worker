@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { normalizeFlowStep, summarizeScreen, verifiedActionResult, WORKDROID_VERSION } from "../src/mcp.js";
 import { selectPhoneSocket, shouldAcceptPhoneSocket } from "../src/phone-sockets.js";
 
-assert.equal(WORKDROID_VERSION, "0.5.5");
+assert.equal(WORKDROID_VERSION, "0.5.6");
 
 assert.deepEqual(verifiedActionResult({ ok: true, result: { ok: true, completed: true } }, "tap"), {
   ok: true,
