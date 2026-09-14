@@ -111,7 +111,7 @@ assert.equal(initialized.result.serverInfo.name, "workdroid");
 
 const listed = await mcp({ jsonrpc: "2.0", id: 3, method: "tools/list", params: {} });
 const names = listed.result.tools.map(tool => tool.name);
-for (const expected of ["phone_status", "read_screen", "find_controls", "screen_state", "open_app", "seek_media", "run_flow"]) assert.ok(names.includes(expected));
+for (const expected of ["phone_status", "observe_device", "execute_device", "read_screen", "find_controls", "screen_state", "open_app", "seek_media", "run_flow"]) assert.ok(names.includes(expected));
 
 const refreshResponse = await fetch(`${base}/oauth/token`, {
   method: "POST",

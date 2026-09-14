@@ -1,6 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
-import { ACTIONS, DEFAULT_BLOCKED } from "./config.js";
-import { selectPhoneSocket } from "./phone-sockets.js";
+import { ACTIONS, DEFAULT_BLOCKED, PROTOCOL_2_ENDPOINTS } from "./config.js";
+import { selectPhoneSocket, socketMetadata } from "./phone-sockets.js";
 import { json, secureEqual } from "./security.js";
 
 export class PhoneRelay extends DurableObject {
@@ -124,7 +124,21 @@ export class PhoneRelay extends DurableObject {
       const pair = new WebSocketPair();
       const client = pair[0], server = pair[1];
       this.ctx.acceptWebSocket(server, ["phone"]);
-      server.serializeAttachment({ role: "phone", connectedAt: Date.now() });
+      const protocol = Number(request.headers.get("X-WorkDroid-Protocol") || 1);
+      const sessionId = String(request.headers.get("X-WorkDroid-Session") || "");
+      const bridgeVersion = String(request.headers.get("X-WorkDroid-Bridge") || "legacy");
+      if (protocol >= 2 && !sessionId) {
+        try { server.close(1008, "Protocol 2 session required"); } catch {}
+        return new Response(null, { status: 101, webSocket: client });
+      }
+      server.serializeAttachment({
+        role: "phone",
+        connectedAt: Date.now(),
+        lastHeartbeatAt: Date.now(),
+        protocol,
+        sessionId,
+        bridgeVersion,
+      });
       for (const old of oldSockets) {
         try { old.close(1012, "Replaced by new phone connection"); } catch {}
       }
@@ -132,10 +146,51 @@ export class PhoneRelay extends DurableObject {
     }
 
     if (url.pathname === "/status") {
+      const phone = this.phone();
+      const meta = phone ? socketMetadata(phone) : {};
       return json({
-        phone_connected: !!this.phone(),
-        enabled_actions: Object.keys(ACTIONS).sort(),
+        phone_connected: !!phone,
+        protocol: Number(meta.protocol || 1),
+        session_id: meta.sessionId || null,
+        bridge_version: meta.bridgeVersion || null,
+        last_heartbeat_at: Number(meta.lastHeartbeatAt || meta.connectedAt || 0) || null,
+        enabled_actions: Number(meta.protocol || 1) >= 2
+          ? PROTOCOL_2_ENDPOINTS
+          : Object.keys(ACTIONS).sort(),
       });
+    }
+
+    if (url.pathname === "/observe" && request.method === "POST") {
+      const body = await request.json().catch(() => ({}));
+      try {
+        return json({ ok: true, result: await this.dispatchV2("/observe", {
+          screenshot: body.screenshot === true,
+        }) });
+      } catch (e) {
+        return json({ ok: false, error: e?.message || String(e) }, e?.status || 500);
+      }
+    }
+
+    if (url.pathname === "/execute" && request.method === "POST") {
+      const body = await request.json().catch(() => ({}));
+      try {
+        return json({ ok: true, result: await this.dispatchV2("/execute", body) });
+      } catch (e) {
+        return json({ ok: false, error: e?.message || String(e) }, e?.status || 500);
+      }
+    }
+
+    if (url.pathname === "/apps" && request.method === "GET") {
+      try {
+        const phone = this.phone();
+        const protocol = Number(phone ? socketMetadata(phone).protocol || 1 : 1);
+        const result = protocol >= 2
+          ? await this.dispatchV2("/apps", {})
+          : await this.dispatch("GET", "/apps", {});
+        return json({ ok: true, result });
+      } catch (e) {
+        return json({ ok: false, error: e?.message || String(e) }, e?.status || 500);
+      }
     }
 
     if (url.pathname === "/action" && request.method === "POST") {
@@ -154,6 +209,15 @@ export class PhoneRelay extends DurableObject {
       if (!Array.isArray(actions) || actions.length < 1 || actions.length > 30) {
         return json({ error: "actions must contain 1..30 items" }, 400);
       }
+      const phone = this.phone();
+      if (phone && Number(socketMetadata(phone).protocol || 1) >= 2) {
+        try {
+          return json(await this.executeProtocol2Batch(actions, body.stop_on_error !== false));
+        } catch (e) {
+          return json({ ok: false, results: [{ index: 0, ok: false, status: e?.status || 500, error: e?.message || String(e) }] });
+        }
+      }
+
       const results = [];
       // Reuse a known-safe foreground package across adjacent batch steps.
       // Actions that can cross an app boundary invalidate the cache below.
@@ -205,6 +269,10 @@ export class PhoneRelay extends DurableObject {
   }
 
   async executeAction(action, args, safetyContext = null) {
+    const phone = this.phone();
+    if (phone && Number(socketMetadata(phone).protocol || 1) >= 2) {
+      return this.executeProtocol2Action(action, args);
+    }
     if (!ACTIONS[action]) throw Object.assign(new Error(`Unknown or disabled action: ${action}`), { status: 400 });
     if (!args || typeof args !== "object" || Array.isArray(args)) {
       throw Object.assign(new Error("args must be an object"), { status: 400 });
@@ -227,6 +295,167 @@ export class PhoneRelay extends DurableObject {
       }
     }
     return result;
+  }
+
+  protocol2Observation(result) {
+    const screen = result?.screen || result;
+    return {
+      sessionId: String(result?.session_id || socketMetadata(this.phone()).sessionId || ""),
+      screen,
+      screenshot: result?.screenshot,
+    };
+  }
+
+  async observeProtocol2(screenshot = false) {
+    return this.protocol2Observation(await this.dispatchV2("/observe", { screenshot }));
+  }
+
+  async executeProtocol2Job(sessionId, steps, screenshot = false, timeoutMs = 15_000) {
+    const now = Date.now();
+    return this.dispatchV2("/execute", {
+      operation_id: crypto.randomUUID(),
+      session_id: sessionId,
+      expires_at: now + 25_000,
+      timeout_ms: Math.min(15_000, Math.max(100, Number(timeoutMs) || 15_000)),
+      steps,
+      screenshot: screenshot === true,
+    });
+  }
+
+  selectorForText(text, exact = true) {
+    return { text: String(text || "").slice(0, 300), exact: exact !== false };
+  }
+
+  focusedEditor(screen) {
+    return (Array.isArray(screen?.nodes) ? screen.nodes : []).find(node => node?.focused === true && node?.editable === true) || null;
+  }
+
+  async leaveBlockedPackage(observation) {
+    const pkg = String(observation.screen?.package || "");
+    if (!this.blockedPackages().has(pkg)) return observation;
+    await this.executeProtocol2Job(observation.sessionId, [{ action: "home", expected_package: pkg }]);
+    return this.observeProtocol2(false);
+  }
+
+  stepForProtocol2(action, args, context) {
+    const expectedPackage = String(context.package || "");
+    if (!expectedPackage) throw Object.assign(new Error("No foreground Android package is available"), { status: 409 });
+    if (action === "open_app") {
+      const packageName = String(args.package || args.package_name || "");
+      if (!packageName) throw Object.assign(new Error("package is required"), { status: 400 });
+      return { action: "open_app", expected_package: expectedPackage, package_name: packageName };
+    }
+    if (action === "tap_text") {
+      return { action: "tap", expected_package: expectedPackage, target: this.selectorForText(args.text, args.exact) };
+    }
+    if (action === "tap") {
+      return {
+        action: "tap_point", expected_package: expectedPackage, revision: String(args.revision || context.revision || ""),
+        x1: Number(args.x), y1: Number(args.y), duration_ms: 100,
+      };
+    }
+    if (action === "type") {
+      const currentText = String(context.editor?.text || "");
+      const replacement = args.clearFirst === false ? `${currentText}${String(args.text || "")}` : String(args.text || "");
+      const step = {
+        action: "replace_text", expected_package: expectedPackage,
+        target: { focused: true, editable: true }, text: replacement,
+      };
+      if (context.editor && !context.editor.hint) step.expected_text = currentText;
+      return step;
+    }
+    if (action === "swipe") {
+      return {
+        action: "swipe", expected_package: expectedPackage, revision: String(args.revision || context.revision || ""),
+        x1: Number(args.x1), y1: Number(args.y1), x2: Number(args.x2), y2: Number(args.y2),
+        duration_ms: Math.min(1_500, Math.max(50, Number(args.durationMs || args.duration_ms || 350))),
+      };
+    }
+    if (action === "press_key") {
+      const key = String(args.key || "").toLowerCase();
+      if (!['back', 'home'].includes(key)) throw Object.assign(new Error(`Protocol 2 does not expose Android key: ${key}`), { status: 400 });
+      return { action: key, expected_package: expectedPackage };
+    }
+    if (action === "scroll") {
+      return {
+        action: "scroll", expected_package: expectedPackage,
+        target: args.target || { scrollable: true },
+        direction: String(args.direction || "forward").toLowerCase() === "backward" ? "backward" : "forward",
+      };
+    }
+    if (action === "wait") {
+      const target = args.target || this.selectorForText(args.text, args.exact === true);
+      return { action: "wait_for", expected_package: expectedPackage, target };
+    }
+    throw Object.assign(new Error(`Action is not available through WorkDroid protocol 2: ${action}`), { status: 400 });
+  }
+
+  async executeProtocol2Action(action, args = {}) {
+    if (action === "apps") return this.dispatchV2("/apps", {});
+    const observed = await this.observeProtocol2(action === "screenshot");
+    if (action === "screen" || action === "find_nodes") return observed.screen;
+    if (action === "current_app") return { package: observed.screen?.package || null, revision: observed.screen?.revision || null };
+    if (action === "screen_hash") return { hash: observed.screen?.revision || null };
+    if (action === "screenshot") return observed.screenshot || observed;
+    if (action === "media") throw Object.assign(new Error("Media keys are not exposed by WorkDroid protocol 2"), { status: 400 });
+
+    let ready = observed;
+    if (action === "open_app") ready = await this.leaveBlockedPackage(observed);
+    const context = {
+      package: ready.screen?.package,
+      revision: ready.screen?.revision,
+      editor: this.focusedEditor(ready.screen),
+    };
+    const step = this.stepForProtocol2(action, args, context);
+    return this.executeProtocol2Job(ready.sessionId, [step], false);
+  }
+
+  async executeProtocol2Batch(actions, stopOnError = true) {
+    let observed = await this.observeProtocol2(false);
+    if (actions.some(item => item?.action === "open_app")) observed = await this.leaveBlockedPackage(observed);
+    const context = {
+      package: observed.screen?.package,
+      revision: observed.screen?.revision,
+      editor: this.focusedEditor(observed.screen),
+    };
+    const executable = [];
+    const mappedIndexes = [];
+    const readOnly = new Set(["screen", "current_app", "find_nodes", "screen_hash"]);
+    const results = [];
+
+    for (let index = 0; index < actions.length; index++) {
+      const item = actions[index] || {};
+      if (readOnly.has(item.action)) continue;
+      try {
+        const step = this.stepForProtocol2(String(item.action || ""), item.args || {}, context);
+        executable.push(step);
+        mappedIndexes.push(index);
+        if (item.action === "open_app") context.package = step.package_name;
+      } catch (e) {
+        results.push({ index, ok: false, action: item.action, status: e?.status || 400, error: e?.message || String(e) });
+        if (stopOnError) return { ok: false, results };
+      }
+    }
+
+    let job = null;
+    if (executable.length) {
+      if (executable.length > 12) return { ok: false, results: [{ index: 12, ok: false, status: 400, error: "Protocol 2 supports at most 12 executable steps" }] };
+      job = await this.executeProtocol2Job(observed.sessionId, executable, false);
+    }
+    const finalScreen = job?.screen || (await this.observeProtocol2(false)).screen;
+    const failedExecutableIndex = job?.ok === false ? Number(job.failed_index) : -1;
+    for (let index = 0; index < actions.length; index++) {
+      if (results.some(item => item.index === index)) continue;
+      const item = actions[index] || {};
+      const executableIndex = mappedIndexes.indexOf(index);
+      if (executableIndex >= 0 && failedExecutableIndex >= 0 && executableIndex >= failedExecutableIndex) {
+        results.push({ index, ok: false, action: item.action, status: 422, error: job?.error || job?.outcome || "Android operation failed" });
+      } else {
+        results.push({ index, ok: true, action: item.action, result: readOnly.has(item.action) ? finalScreen : job?.steps?.[executableIndex] || { completed: true } });
+      }
+    }
+    results.sort((a, b) => a.index - b.index);
+    return { ok: results.every(item => item.ok), results, screen: finalScreen };
   }
 
   async dispatch(method, path, args) {
@@ -258,10 +487,48 @@ export class PhoneRelay extends DurableObject {
     });
   }
 
+  async dispatchV2(path, body = {}) {
+    const ws = this.phone();
+    if (!ws) throw Object.assign(new Error("Android bridge is not connected"), { status: 503 });
+    const meta = socketMetadata(ws);
+    if (Number(meta.protocol || 1) < 2) {
+      throw Object.assign(new Error("Connected Android bridge does not support protocol 2"), { status: 409 });
+    }
+    const requestId = crypto.randomUUID();
+    const command = {
+      request_id: requestId,
+      path,
+      body,
+      expires_at: Date.now() + 30_000,
+      blocked_packages: [...this.blockedPackages()],
+    };
+    const timeoutMs = Math.min(35_000, Math.max(1_000, Number(this.env.COMMAND_TIMEOUT_MS || 25_000) + 5_000));
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.pending.delete(requestId);
+        reject(Object.assign(new Error(`Phone command timed out: ${path}`), { status: 504 }));
+      }, timeoutMs);
+      this.pending.set(requestId, { resolve, reject, timer, socket: ws });
+      try {
+        ws.send(JSON.stringify(command));
+      } catch (e) {
+        clearTimeout(timer);
+        this.pending.delete(requestId);
+        try { ws.close(1011, "Relay send failed"); } catch {}
+        reject(Object.assign(new Error(`WebSocket send failed: ${e?.message || e}`), { status: 502 }));
+      }
+    });
+  }
+
   async webSocketMessage(ws, message) {
     if (typeof message !== "string") return;
     let data;
     try { data = JSON.parse(message); } catch { return; }
+    if (!data.request_id) {
+      const meta = socketMetadata(ws);
+      try { ws.serializeAttachment({ ...meta, lastHeartbeatAt: Date.now() }); } catch {}
+      return;
+    }
     const pending = this.pending.get(data.request_id);
     if (!pending) return;
     if (pending.socket !== ws) return;

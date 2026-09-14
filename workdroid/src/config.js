@@ -29,4 +29,12 @@ export const DEFAULT_BLOCKED = Object.freeze([
   "com.bitwarden.app",
   "com.onepassword.android",
   "com.lastpass.lpandroid",
+  "com.workdroid.bridge",
+  "com.workdroid.bridge.next",
+]);
+
+export const PROTOCOL_2_ENDPOINTS = Object.freeze([
+  "apps",
+  "observe_device",
+  "execute_device",
 ]);

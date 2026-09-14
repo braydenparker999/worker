@@ -1,12 +1,16 @@
 const OPEN = 1;
 
-function connectedAt(socket) {
+export function socketMetadata(socket) {
   try {
-    const value = Number(socket.deserializeAttachment?.()?.connectedAt || 0);
-    return Number.isFinite(value) ? value : 0;
+    return socket.deserializeAttachment?.() || {};
   } catch {
-    return 0;
+    return {};
   }
+}
+
+function connectedAt(socket) {
+  const value = Number(socketMetadata(socket).connectedAt || 0);
+  return Number.isFinite(value) ? value : 0;
 }
 
 /**

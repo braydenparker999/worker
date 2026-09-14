@@ -6,7 +6,7 @@ const READ_ONLY = { readOnlyHint: true, destructiveHint: false, openWorldHint: f
 const NAVIGATION = { readOnlyHint: false, destructiveHint: false, openWorldHint: false };
 const CONSEQUENTIAL = { readOnlyHint: false, destructiveHint: true, openWorldHint: false };
 
-export const WORKDROID_VERSION = "0.4.0";
+export const WORKDROID_VERSION = "0.5.0";
 
 async function relayJson(stub, path, body) {
   const response = await stub.fetch(new Request(`https://relay.internal${path}`, {
@@ -190,9 +190,12 @@ function compactFlowResults(data, steps) {
 }
 
 function extractImage(result) {
-  const data = result?.image || result?.data?.image || result?.screenshot || result?.base64;
-  const mimeType = result?.mimeType || result?.mime_type || "image/jpeg";
-  return typeof data === "string" && data.length > 100 ? { data, mimeType } : null;
+  for (const object of allObjects(result)) {
+    const data = object?.image || object?.base64 || object?.data;
+    const mimeType = object?.mimeType || object?.mime_type || "image/jpeg";
+    if (typeof data === "string" && data.length > 100) return { data, mimeType };
+  }
+  return null;
 }
 
 function allObjects(value, out = []) {
@@ -296,7 +299,7 @@ function createServer(stub) {
   const server = new McpServer(
     { name: "workdroid", version: WORKDROID_VERSION },
     {
-      instructions: "WorkDroid controls the owner's connected Android phone. Prefer compact read_screen, find_controls, and screen_state over full accessibility trees. Use run_flow for short deliberate sequences so several actions share one relay request. Never claim an action succeeded unless the returned result confirms it. Sensitive packages are blocked by the relay.",
+      instructions: "WorkDroid controls the owner's connected Android phone. For protocol 2, observe_device returns a revision-bound screen and execute_device runs up to 12 verified steps locally on the phone. Prefer those two tools for fast multi-step work. Familiar focused tools remain available as compatibility helpers. Never claim an action succeeded unless the returned result confirms it. Sensitive packages are blocked by both relay and phone.",
     },
   );
 
@@ -306,6 +309,97 @@ function createServer(stub) {
     inputSchema: {},
     annotations: READ_ONLY,
   }, async () => toolResult("WorkDroid phone status", await relayJson(stub, "/status")));
+
+  server.registerTool("observe_device", {
+    title: "Observe Android device",
+    description: "Read the foreground package and compact accessibility tree in one protocol-2 observation. Use before execute_device to obtain the exact package and screen revision.",
+    inputSchema: {
+      screenshot: z.boolean().optional().default(false),
+      include_bounds: z.boolean().optional().default(true),
+      max_nodes: z.number().int().min(10).max(200).optional().default(80),
+    },
+    annotations: READ_ONLY,
+  }, async ({ screenshot, include_bounds, max_nodes }) => {
+    const data = await relayJson(stub, "/observe", { screenshot });
+    const result = data.result || data;
+    const screen = result.screen || result;
+    const compact = {
+      session_id: result.session_id || null,
+      screen: summarizeScreen(screen, { includeBounds: include_bounds, maxNodes: max_nodes }),
+      revision: screen?.revision || null,
+    };
+    const image = extractImage(result.screenshot);
+    if (!image) return toolResult("Android device observation", compact);
+    return {
+      structuredContent: { result: compact },
+      content: [
+        { type: "text", text: `Android device observation\n${compactJson(compact)}` },
+        { type: "image", data: image.data, mimeType: image.mimeType },
+      ],
+    };
+  });
+
+  const selectorSchema = z.object({
+    text: z.string().max(300).optional(),
+    description: z.string().max(300).optional(),
+    view_id: z.string().max(400).optional(),
+    role: z.string().max(200).optional(),
+    focused: z.boolean().optional(),
+    editable: z.boolean().optional(),
+    scrollable: z.boolean().optional(),
+    exact: z.boolean().optional(),
+  });
+  const deviceStepSchema = z.object({
+    action: z.enum(["open_app", "tap", "tap_point", "replace_text", "scroll", "swipe", "back", "home", "wait_for", "assert", "editor_action"]),
+    expected_package: z.string().min(1).max(300),
+    target: selectorSchema.optional(),
+    package_name: z.string().max(300).optional(),
+    text: z.string().max(4_000).optional(),
+    expected_text: z.string().max(4_000).optional(),
+    direction: z.enum(["forward", "backward"]).optional(),
+    editor_action: z.enum(["search", "go", "done", "send"]).optional(),
+    revision: z.string().max(200).optional(),
+    x1: z.number().int().min(0).max(10_000).optional(),
+    y1: z.number().int().min(0).max(10_000).optional(),
+    x2: z.number().int().min(0).max(10_000).optional(),
+    y2: z.number().int().min(0).max(10_000).optional(),
+    duration_ms: z.number().int().min(50).max(1_500).optional(),
+    until: selectorSchema.optional(),
+    result_package: z.string().max(300).optional(),
+  });
+
+  server.registerTool("execute_device", {
+    title: "Execute verified Android steps",
+    description: "Run 1-12 ordered protocol-2 steps locally on the phone. Every step must name the exact expected foreground package. Coordinate gestures also require the revision returned by observe_device. Use editor_action send only when the user authorized sending.",
+    inputSchema: {
+      steps: z.array(deviceStepSchema).min(1).max(12),
+      screenshot: z.boolean().optional().default(false),
+      timeout_ms: z.number().int().min(100).max(15_000).optional().default(15_000),
+    },
+    annotations: CONSEQUENTIAL,
+  }, async ({ steps, screenshot, timeout_ms }) => {
+    const status = await relayJson(stub, "/status");
+    if (Number(status.protocol || 1) < 2 || !status.session_id) throw new Error("A connected WorkDroid protocol-2 session is required");
+    const now = Date.now();
+    const data = await relayJson(stub, "/execute", {
+      operation_id: crypto.randomUUID(),
+      session_id: status.session_id,
+      expires_at: now + 25_000,
+      timeout_ms,
+      steps,
+      screenshot,
+    });
+    const result = data.result || data;
+    const image = extractImage(result.screenshot);
+    if (!image) return toolResult("Android protocol-2 execution", result);
+    return {
+      structuredContent: { result: { ...result, screenshot: "<image attached>" } },
+      content: [
+        { type: "text", text: `Android protocol-2 execution\n${compactJson({ ...result, screenshot: "<image attached>" })}` },
+        { type: "image", data: image.data, mimeType: image.mimeType },
+      ],
+    };
+  });
 
   server.registerTool("current_app", {
     title: "Get foreground app",
